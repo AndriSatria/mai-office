@@ -9,7 +9,9 @@ into a chat panel and a speech bubble over their head.
 * **Backend:** Node.js, `express` + `ws`. **Frontend:** one HTML page + plain `<canvas>`, no build step.
 * **Art:** 100% procedural (`fillRect` on a 384×240 logical canvas, integer / half-step upscaling with
   `imageSmoothingEnabled = false`). No assets.
-* **Modes:** `claude` (real Claude Code CLI, headless) or `mock` (simulated agents so you can demo the UI).
+* **Agent types** (chosen per agent when hiring): `claude` (Claude Code CLI), `cursor` (Cursor CLI agent) or `mock`
+  (simulated, no CLI). Each agent shows a small type badge under its name and in the chat header.
+* **Lively idle agents:** idle people stretch, read, look around, sip coffee, or meet up for a chat by the coffee machine.
 
 ## Run
 
@@ -18,13 +20,17 @@ npm install
 npm start            # http://127.0.0.1:3000  (PORT=4000 npm start to change the port)
 ```
 
-Mode is picked automatically: `claude` if a `claude` binary is on `PATH`, otherwise `mock`.
-Force one with `HARNESS_MODE`:
+`HARNESS_MODE` sets the **default agent type** preselected in the Hire dialog (and used for agents saved without one).
+If unset it is auto-detected: `claude` on `PATH` → `claude`, else `cursor-agent` on `PATH` → `cursor`, else `mock`.
 
 ```bash
-HARNESS_MODE=mock   npm start      # simulated agents, no Claude needed
+HARNESS_MODE=mock   npm start      # simulated agents, no CLI needed
 HARNESS_MODE=claude npm start      # real Claude Code (needs `claude` installed & logged in)
+HARNESS_MODE=cursor npm start      # Cursor CLI agent (needs `cursor-agent` installed & logged in)
 ```
+
+All three types can be mixed in one office - pick the type per agent in the **Hire agent** dialog
+(types whose CLI isn't found are flagged "CLI not found"). The type is persisted with the agent.
 
 ### Using it
 
@@ -32,7 +38,7 @@ HARNESS_MODE=claude npm start      # real Claude Code (needs `claude` installed 
 | --- | --- |
 | Select an agent | Click the person (or their desk). Chat panel opens on the right. |
 | Talk to it | Type in the box, **Enter** to send (Shift+Enter = newline). Messages sent while it's busy are queued. |
-| Hire | **＋ Hire agent** (or click an empty desk): name + working directory. Up to 8 desks. |
+| Hire | **＋ Hire agent** (or click an empty desk): name, agent type (Claude Code / Cursor / Mock), working directory. Up to 8 desks. |
 | Fire | Select an agent, **✖ Fire agent**. |
 | Stop a run | **■ Stop** in the chat panel (kills the CLI process). |
 
@@ -40,11 +46,27 @@ Agent states and what you see:
 
 | State | Trigger | Visuals |
 | --- | --- | --- |
-| idle | nothing running | subtle bob + blinking; may wander to the coffee corner (pass `?wander=off` to disable, `?wander=fast` to demo) |
+| idle | nothing running | subtle bob + blinking, plus random idle activities (below) |
 | thinking | run started / waiting on model | thought bubble with animated dots, hand on chin |
 | working | tool use or streaming text | typing arms, flickering code on the monitor, green chip with the tool name (`Bash`, `Edit`, …) |
 | done | `result` event | green ✓, sparkles, arms up, smiling |
 | error | CLI/run error | red `!`, worried face, red monitor, error shown in chat + bubble |
+
+### Idle behaviour
+
+Agents that are idle and not selected/hovered pick a random activity every ~8-22 s (weights in `pickActivity`, `public/js/app.js`):
+
+| Activity | What you see |
+| --- | --- |
+| stretch | arms up, yawn |
+| read | holds a little book, turns pages, looks down |
+| look around | head/eyes glance left and right |
+| coffee | walks to the coffee machine, sips from a mug, walks back |
+| chat | two idle agents walk to the coffee machine and talk, alternating small speech-bubble icons (`...`, `!`, `?`, ♥, ♪) |
+
+Only one coffee/chat trip at a time. Selecting an agent or giving it work (state ≠ idle) sends it back to its desk
+(a chat ends for both). URL flags: `?wander=off` disables all idle behaviour, `?wander=fast` makes it happen every few seconds.
+For demos/tests the console exposes `harness.forceActivity(id, 'stretch'|'read'|'look'|'coffee'|'chat', partnerId)`.
 
 ## Claude mode details
 
@@ -83,6 +105,27 @@ Environment knobs:
 > `HARNESS_MODE=claude HARNESS_CLAUDE_BIN=$PWD/scripts/fake-claude.js npm start`.
 > Run `claude --help` and adjust `lib/adapters/claude.js` if your CLI version differs.
 
+## Cursor mode details
+
+Per message, with cwd = the agent's working directory (from the [Cursor CLI docs](https://cursor.com/docs/cli/reference/output-format)):
+
+```
+cursor-agent -p --output-format stream-json --trust [--stream-partial-output] [--resume <chatId>] -- "<your message>"
+```
+
+The binary is looked up as `cursor-agent`, then `agent` (newer installs), or `HARNESS_CURSOR_BIN`. Event mapping:
+
+* `system/init` (`session_id`) → remembered, passed as `--resume` next time
+* `assistant` → chat reply (one event per message segment; with `HARNESS_PARTIAL=1` only the `timestamp_ms`-without-`model_call_id` deltas are used for live streaming, duplicates skipped)
+* `tool_call` `started` → **working** + tool label (`shellToolCall` → `Shell`, `readToolCall` → `Read`, `editToolCall` → `Edit`, …) and a `▸ Shell: npm test` line; `completed` → back to **thinking**
+* `result` → **done** (or **error** when `is_error` / non-success); a non-zero exit without a result → **error** with stderr
+
+`HARNESS_CURSOR_ARGS` adds extra args (`--model …`, `--force` to let it run shell commands without prompting - dangerous).
+
+> ⚠️ **Cursor mode is untested against a real `cursor-agent`** (not installed here); it follows the documented flags and event
+> shapes. It is covered by `npm run test:adapters`, which drives claude/cursor/mock agents through the real server using
+> `scripts/fake-claude.js` and `scripts/fake-cursor-agent.js` (also usable as `HARNESS_CURSOR_BIN` for manual demos).
+
 ## Security notes
 
 The server can make Claude Code run in any directory you give it. It binds to loopback by default and rejects
@@ -94,29 +137,35 @@ cross-origin WebSocket connections, but there is **no authentication** — don't
 server.js                 express static + WebSocket hub
 lib/harness.js            agent registry, state machine, persistence, message queue
 lib/adapters/claude.js    Claude Code CLI adapter (stream-json)
+lib/adapters/cursor.js    Cursor CLI agent adapter (stream-json)
 lib/adapters/mock.js      simulated agent
-lib/adapters/index.js     mode selection
+lib/adapters/index.js     adapter registry, per-type availability, default type
 public/index.html, style.css
 public/js/office.js       procedural pixel-art renderer (scene, characters, bubbles)
 public/js/app.js          WebSocket client, chat panel, wandering logic
 scripts/screenshots.js    Playwright demo: hires, chats, screenshots → screenshots/
 scripts/fake-claude.js    fake `claude` binary for adapter testing
+scripts/fake-cursor-agent.js  fake `cursor-agent` binary
+scripts/test-adapters.js  end-to-end test of all agent types + type persistence (`npm run test:adapters`)
 ```
 
-WebSocket protocol — client→server: `hire {name,cwd}`, `fire {id}`, `send {id,text}`, `interrupt {id}`;
+WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`;
 server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `error`.
 
 ## Regenerate screenshots
 
 ```bash
 npm install && npx playwright install chromium
-npm run screenshots
+npm run screenshots     # uses the fake claude/cursor CLIs so all agent types appear
 ```
+
+Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, wandering, coffee break, fire),
+`10-idle-stretch-read-look`, `11`/`11b-idle-chat-at-coffee`, `12-hire-dialog-agent-type`.
 
 ## Known limitations / ideas
 
 * Max 8 agents (desk slots); fixed office layout; characters only face front.
-* Claude mode untested with real CLI; no tool-permission prompts in headless mode; one process per message.
+* Claude and Cursor modes are untested with the real CLIs; no tool-permission prompts in headless mode; one process per message.
 * No auth; no markdown rendering in chat; long transcripts are capped at 300 messages per agent.
 * Next: agent-to-agent messaging, `/clear`/new-session button, per-agent model & permission settings,
   markdown/diff rendering, sound, day/night cycle, a meeting room for multi-agent tasks.

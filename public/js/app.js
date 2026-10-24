@@ -4,11 +4,18 @@
   const $ = (id) => document.getElementById(id);
   const canvas = $('office');
   const agents = new Map();          // id -> agent (server fields + client anim fields)
-  let mode = '?', defaultCwd = '', selectedId = null, hoverId = null, hoverSlot = null;
+  let mode = '?', types = [], defaultCwd = '', selectedId = null, hoverId = null, hoverSlot = null;
   let ws = null, connected = false;
   const params = new URLSearchParams(location.search);
+  // ?wander=off disables idle behaviour entirely, ?wander=fast makes it happen every few seconds
   const WANDER = params.get('wander') !== 'off';
   const WANDER_FAST = params.get('wander') === 'fast';
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const TYPE_INFO = {
+    claude: ['Claude Code', 'claude -p … --resume'],
+    cursor: ['Cursor', 'cursor-agent -p … --resume'],
+    mock: ['Mock', 'simulated agent, no CLI needed'],
+  };
   const BUBBLE_TTL = 14000;
   const NAMES = ['Ada', 'Linus', 'Grace', 'Alan', 'Margaret', 'Ken', 'Barbara', 'Dennis'];
 
@@ -26,7 +33,8 @@
     if (a.phase === undefined) a.phase = Math.random();
     a.away = a.away || false; a.mode = a.mode || 'sit';
     a.transcript = a.transcript || [];
-    a.nextWander = performance.now() + (WANDER_FAST ? 3000 : 20000 + Math.random() * 40000);
+    a.nextAct = performance.now() + (WANDER_FAST ? rand(1500, 3500) : rand(5000, 14000));
+    a.act = null; a.partner = null;
     a.bubble = a.bubble || null; a.bubbleAt = a.bubbleAt || 0;
     return a;
   }
@@ -34,8 +42,8 @@
   function onServer(m) {
     switch (m.type) {
       case 'snapshot': {
-        mode = m.mode; defaultCwd = m.defaultCwd;
-        $('modeBadge').textContent = m.mode + ' mode'; $('modeBadge').className = 'badge ' + m.mode;
+        mode = m.defaultType || m.mode; types = m.types || []; defaultCwd = m.defaultCwd;
+        $('modeBadge').textContent = 'default: ' + mode; $('modeBadge').className = 'badge ' + mode;
         const seen = new Set();
         for (const a of m.agents) {
           seen.add(a.id);
@@ -106,6 +114,7 @@
   function updateHead() {
     const a = agents.get(selectedId); if (!a) return;
     $('chatName').textContent = a.name;
+    const tb = $('chatType'); tb.textContent = (TYPE_INFO[a.type] || [a.type])[0]; tb.className = 'typebadge ' + a.type;
     $('chatCwd').textContent = a.cwd; $('chatCwd').title = a.cwd;
     const st = $('chatState'); st.textContent = a.state === 'working' && a.tool ? 'working · ' + a.tool : a.state; st.className = 'pill ' + a.state;
     $('stopBtn').hidden = !(a.state === 'thinking' || a.state === 'working');
@@ -146,7 +155,21 @@
 
   // ---------- hire / fire ----------
   let pendingSelect = false;
+  function renderTypeOptions() {
+    const box = $('typeOptions'); box.innerHTML = '';
+    const list = types.length ? types : [{ id: 'mock', available: true }];
+    for (const t of list) {
+      const info = TYPE_INFO[t.id] || [t.label || t.id, ''];
+      const l = document.createElement('label'); l.className = 'typeopt';
+      l.innerHTML = '<input type="radio" name="agentType"><span class="tn"></span><span class="td"></span><span class="ts"></span>';
+      const inp = l.querySelector('input'); inp.value = t.id; inp.checked = t.id === mode;
+      l.querySelector('.tn').textContent = info[0]; l.querySelector('.td').textContent = info[1];
+      const ts = l.querySelector('.ts'); ts.textContent = t.available ? 'ready' : 'CLI not found'; ts.classList.add(t.available ? 'ok' : 'missing');
+      box.appendChild(l);
+    }
+  }
   function openHire() {
+    renderTypeOptions();
     const used = new Set([...agents.values()].map((a) => a.name.toLowerCase()));
     $('hireName').value = NAMES.find((n) => !used.has(n.toLowerCase())) || '';
     $('hireCwd').value = defaultCwd;
@@ -155,7 +178,8 @@
   $('hireBtn').addEventListener('click', openHire);
   $('hireCancel').addEventListener('click', () => $('hireDlg').close());
   $('hireForm').addEventListener('submit', () => {
-    send({ type: 'hire', name: $('hireName').value, cwd: $('hireCwd').value }); pendingSelect = true;
+    const sel = document.querySelector('input[name=agentType]:checked');
+    send({ type: 'hire', name: $('hireName').value, cwd: $('hireCwd').value, agentType: sel ? sel.value : undefined }); pendingSelect = true;
   });
   $('fireBtn').addEventListener('click', () => {
     const a = agents.get(selectedId); if (!a) return;
@@ -173,8 +197,14 @@
       let bubble = null;
       if (a.bubble && (a.state === 'working' || a.state === 'thinking' || now - a.bubbleAt < BUBBLE_TTL)) bubble = a.bubble;
       if (a.state === 'thinking' && now - a.bubbleAt > 2500) bubble = null;
-      return { id: a.id, name: a.name, slot: a.slot, look: a.look, state: a.state, tool: a.tool, queued: a.queued,
-        phase: a.phase, away: a.away, x: a.x, y: a.y, mode: a.mode, bubble };
+      let talk = null;
+      if (a.mode === 'chat' && a.chatStart) {
+        const beat = Math.floor((now - a.chatStart) / 1700);
+        if (beat % 2 === a.chatSide) talk = Math.floor(beat / 2 + a.chatSide * 2) % 5;
+      }
+      return { id: a.id, name: a.name, type: a.type, slot: a.slot, look: a.look, state: a.state, tool: a.tool, queued: a.queued,
+        phase: a.phase, away: a.away, x: a.x, y: a.y, mode: a.mode, bubble,
+        act: a.act ? a.act.kind : null, actP: a.act ? (now - a.act.t0) / 1000 : 0, talk, talkDir: a.chatSide === 0 ? 1 : -1 };
     });
   }
   function toLogical(ev) {
@@ -194,33 +224,71 @@
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('hireDlg').open && document.activeElement !== $('input')) select(null); });
 
-  // ---------- wandering (idle agents stroll to the coffee corner) ----------
+  // ---------- idle behaviour ----------
+  // Idle agents (not selected / hovered / busy) occasionally: stretch, read, look around (at the desk),
+  // sip coffee, or meet another idle agent by the coffee machine for a chat. Anything non-idle sends them home.
   const SPEED = 40;
-  function coffeeBusy() { for (const a of agents.values()) if (a.away) return true; return false; }
-  function startWander(a) {
-    a.pts = Office.coffeePath(a.slot); a.idx = 0; a.x = a.pts[0].x; a.y = a.pts[0].y;
-    a.away = true; a.mode = 'walk'; a.dir = 1; a.target = 1; a.drinkUntil = 0;
+  const wantsHome = (a) => (a.state !== 'idle' && a.state !== 'done') || a.id === selectedId;
+  const socialBusy = () => { for (const a of agents.values()) if (a.away) return true; return false; };
+  const canStart = (a) => !a.away && !a.act && a.state === 'idle' && a.id !== selectedId;
+  const endAct = (a, now) => { a.act = null; a.nextAct = now + (WANDER_FAST ? rand(2000, 4000) : rand(8000, 22000)); };
+
+  function startWalk(a, spot, dest) {
+    a.pts = Office.walkPath(a.slot, spot); a.idx = 0; a.x = a.pts[0].x; a.y = a.pts[0].y;
+    a.away = true; a.mode = 'walk'; a.dest = dest; a.dir = 1; a.target = 1; a.chatStart = 0; a.waitSince = 0;
   }
+  function startActivity(a, kind, partner, now) {
+    now = now || performance.now();
+    if (kind === 'coffee') return startWalk(a, Office.SPOTS.coffee[0], 'drink');
+    if (kind === 'chat' && partner) {
+      a.partner = partner.id; partner.partner = a.id; a.chatSide = 0; partner.chatSide = 1;
+      if (partner.act) partner.act = null;
+      startWalk(a, Office.SPOTS.chat[0], 'chat'); startWalk(partner, Office.SPOTS.chat[1], 'chat');
+      return;
+    }
+    const dur = { stretch: 3300, read: rand(7000, 11000), look: 5400 }[kind];
+    if (dur) a.act = { kind, t0: now, until: now + dur };
+  }
+  function pickActivity(a) {
+    const opts = [['stretch', 2], ['read', 3], ['look', 3]];
+    const mates = [...agents.values()].filter((b) => b !== a && canStart(b) && b.id !== hoverId);
+    if (!socialBusy()) { opts.push(['coffee', 3]); if (mates.length) opts.push(['chat', 3]); }
+    let r = Math.random() * opts.reduce((n, o) => n + o[1], 0), kind = opts[0][0];
+    for (const [k, w] of opts) { if ((r -= w) < 0) { kind = k; break; } }
+    startActivity(a, kind, kind === 'chat' ? mates[Math.floor(Math.random() * mates.length)] : null);
+  }
+  function leave(a) { a.mode = 'walk'; a.dir = -1; a.target = a.pts.length - 2; a.partner = null; a.chatStart = 0; }
+
   function stepWalker(a, dt, now) {
-    if (a.mode === 'drink') { if (now > a.drinkUntil || a.state !== 'idle') { a.mode = 'walk'; a.dir = -1; a.target = a.pts.length - 2; } return; }
-    const wantHome = a.state !== 'idle' && a.state !== 'done';
-    if (wantHome && a.dir === 1) { a.dir = -1; a.target = a.idx; }
+    if (a.mode === 'drink') { if (now > a.drinkUntil || wantsHome(a)) leave(a); return; }
+    if (a.mode === 'chat') {
+      const p = agents.get(a.partner);
+      const partnerHere = p && p.away && p.partner === a.id && p.mode === 'chat';
+      if (partnerHere && !a.chatStart) { a.chatStart = p.chatStart = now; a.until = p.until = now + (WANDER_FAST ? 7000 : rand(8000, 13000)); }
+      if (!p || !p.away || p.partner !== a.id || wantsHome(a) || (a.chatStart && now > a.until) || (!a.chatStart && now - a.waitSince > 25000)) leave(a);
+      return;
+    }
+    if (wantsHome(a) && a.dir === 1) { a.dir = -1; a.target = a.idx; a.partner = null; }
     const p = a.pts[a.target]; const dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy);
     const stepLen = SPEED * dt;
     if (d <= stepLen) {
       a.x = p.x; a.y = p.y; a.idx = a.target;
       if (a.dir === 1) {
-        if (a.target === a.pts.length - 1) { a.mode = 'drink'; a.drinkUntil = now + (WANDER_FAST ? 4000 : 5000 + Math.random() * 5000); }
-        else a.target++;
-      } else if (a.target === 0) { a.away = false; a.mode = 'sit'; a.nextWander = now + (WANDER_FAST ? 8000 : 25000 + Math.random() * 45000); }
+        if (a.target === a.pts.length - 1) {
+          if (a.dest === 'drink') { a.mode = 'drink'; a.drinkUntil = now + (WANDER_FAST ? 4000 : rand(5000, 10000)); }
+          else { a.mode = 'chat'; a.waitSince = now; }
+        } else a.target++;
+      } else if (a.target === 0) { a.away = false; a.mode = 'sit'; a.partner = null; endAct(a, now); }
       else a.target--;
     } else { a.x += (dx / d) * stepLen; a.y += (dy / d) * stepLen; }
   }
   function update(dt, now) {
     for (const a of agents.values()) {
       if (a.away) { stepWalker(a, dt, now); continue; }
-      if (WANDER && a.state === 'idle' && now > a.nextWander && !coffeeBusy() && a.id !== hoverId) startWander(a);
-      else if (now > a.nextWander) a.nextWander = now + 5000;
+      if (a.act && (a.state !== 'idle' || a.id === selectedId || now > a.act.until)) endAct(a, now);
+      if (WANDER && canStart(a) && now > a.nextAct) {
+        if (a.id === hoverId) a.nextAct = now + 3000; else pickActivity(a);
+      }
     }
   }
 
@@ -245,8 +313,10 @@
   // handy for tests / debugging in the console
   window.harness = {
     agents, select, send,
-    states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, state: a.state, tool: a.tool, away: a.away, mode: a.mode })),
-    forceWander: (id) => { const a = agents.get(id); if (a && !a.away) startWander(a); },
+    states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind })),
+    // kind: coffee | chat (needs partnerId) | stretch | read | look   (ignores timers/eligibility; for demos & tests)
+    forceActivity: (id, kind, partnerId) => { const a = agents.get(id); if (a && !a.away) startActivity(a, kind, partnerId ? agents.get(partnerId) : null); },
+    forceWander: (id) => { const a = agents.get(id); if (a && !a.away) startActivity(a, 'coffee'); },
   };
 
   resize(); connect(); requestAnimationFrame(frame);

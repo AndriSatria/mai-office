@@ -29,7 +29,7 @@
         <div id="chatHead">
           <canvas id="avatar" width="20" height="26"></canvas>
           <div class="meta">
-            <div id="chatName">—</div>
+            <div class="nameRow"><span id="chatName">—</span><span id="chatType" class="typebadge">—</span></div>
             <div id="chatCwd" class="dim">—</div>
           </div>
           <span id="chatState" class="pill idle">idle</span>
@@ -51,6 +51,7 @@
     <form id="hireForm" method="dialog">
       <h3>Hire a new agent</h3>
       <label>Name <input id="hireName" maxlength="24" required autocomplete="off"></label>
+      <fieldset id="typeChoice"><legend>Agent type</legend><div id="typeOptions"></div></fieldset>
       <label>Working directory <input id="hireCwd" autocomplete="off" spellcheck="false"></label>
       <div class="row">
         <button type="button" id="hireCancel" class="btn">Cancel</button>

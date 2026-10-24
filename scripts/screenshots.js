@@ -16,7 +16,9 @@ fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
-  const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT, HARNESS_MODE: 'mock', HARNESS_DATA: DATA, HARNESS_DEFAULT_CWD: ROOT }, stdio: 'inherit' });
+  // claude/cursor agents use the stand-in CLIs in scripts/ so every agent type can be demoed without installs
+  const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT, HARNESS_MODE: 'mock', HARNESS_DATA: DATA, HARNESS_DEFAULT_CWD: ROOT,
+    HARNESS_CLAUDE_BIN: path.join(__dirname, 'fake-claude.js'), HARNESS_CURSOR_BIN: path.join(__dirname, 'fake-cursor-agent.js') }, stdio: 'inherit' });
   await sleep(1200);
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
@@ -38,9 +40,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await shot('01-empty-office.png');
 
     // Hire agents through the real dialog
-    for (const [name, cwd] of [['Ada', ROOT], ['Linus', ROOT], ['Grace', ROOT], ['Ken', ROOT]]) {
+    for (const [name, cwd, type] of [['Ada', ROOT, 'mock'], ['Linus', ROOT, 'cursor'], ['Grace', ROOT, 'claude'], ['Ken', ROOT, 'mock']]) {
       await page.click('#hireBtn');
       await page.fill('#hireName', name); await page.fill('#hireCwd', cwd);
+      await page.click(`.typeopt:has(input[value=${type}])`);
+      if (name === 'Linus') await shot('12-hire-dialog-agent-type.png'); // dialog with the agent-type picker
       await page.click('#hireOk');
       await page.waitForFunction((n) => window.harness.states().some((a) => a.name === n), name);
     }
@@ -80,6 +84,28 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.waitForFunction(() => !window.harness.states().some((a) => a.name === 'Grace'));
     await sleep(500);
     await shot('09-after-fire.png');
+
+    // Idle variety: stretching, reading, looking around at the desks
+    await page.evaluate(() => window.harness.select(null));
+    await page.waitForFunction(() => window.harness.states().every((a) => !a.away), null, { timeout: 20000 });
+    await page.evaluate(() => {
+      const by = (n) => [...window.harness.agents.values()].find((x) => x.name === n).id;
+      window.harness.forceActivity(by('Ada'), 'stretch'); window.harness.forceActivity(by('Linus'), 'read'); window.harness.forceActivity(by('Ken'), 'look');
+    });
+    await sleep(1300);
+    await shot('10-idle-stretch-read-look.png');
+    await page.waitForFunction(() => window.harness.states().every((a) => !a.act), null, { timeout: 20000 });
+
+    // Two idle agents meet by the coffee machine and chat
+    await page.evaluate(() => {
+      const by = (n) => [...window.harness.agents.values()].find((x) => x.name === n).id;
+      window.harness.forceActivity(by('Ada'), 'chat', by('Linus'));
+    });
+    await page.waitForFunction(() => window.harness.states().filter((a) => a.mode === 'chat').length === 2, null, { timeout: 20000 });
+    await sleep(900);
+    await shot('11-idle-chat-at-coffee.png');
+    await sleep(1700);
+    await shot('11b-idle-chat-reply.png');
     console.log('final states', JSON.stringify(await states()));
   } finally {
     await browser.close();

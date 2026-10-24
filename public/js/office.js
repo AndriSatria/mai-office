@@ -113,15 +113,20 @@
     R(c, cx - 6, top, 12, 11, skin);
     R(c, cx - 7, top + 4, 1, 3, dark); R(c, cx + 6, top + 4, 1, 3, dark);
     const m = face.mood || 'normal';
-    if (face.blink && m === 'normal') { R(c, cx - 3, top + 6, 2, 1, '#222'); R(c, cx + 1, top + 6, 2, 1, '#222'); }
+    const lk = face.look || 0;
+    if (m === 'yawn') { R(c, cx - 3, top + 6, 2, 1, '#222'); R(c, cx + 1, top + 6, 2, 1, '#222'); R(c, cx - 4, top + 5, 1, 1, '#222'); R(c, cx + 3, top + 5, 1, 1, '#222'); }
+    else if (m === 'read') { R(c, cx - 3, top + 7, 2, 1, '#222'); R(c, cx + 1, top + 7, 2, 1, '#222'); R(c, cx - 3, top + 6, 2, 1, shade(skin, -30)); R(c, cx + 1, top + 6, 2, 1, shade(skin, -30)); }
+    else if (face.blink && m === 'normal') { R(c, cx - 3 + lk, top + 6, 2, 1, '#222'); R(c, cx + 1 + lk, top + 6, 2, 1, '#222'); }
     else if (m === 'happy') { R(c, cx - 3, top + 5, 2, 1, '#222'); R(c, cx - 4, top + 6, 1, 1, '#222'); R(c, cx - 2, top + 6, 1, 1, '#222');
       R(c, cx + 1, top + 5, 2, 1, '#222'); R(c, cx, top + 6, 1, 1, '#222'); R(c, cx + 3, top + 6, 1, 1, '#222'); }
     else if (m === 'worried') { R(c, cx - 3, top + 5, 2, 3, '#222'); R(c, cx + 1, top + 5, 2, 3, '#222'); R(c, cx - 3, top + 3, 3, 1, '#222'); R(c, cx + 1, top + 3, 3, 1, '#222'); }
-    else { R(c, cx - 3, top + 5, 2, 2, '#222'); R(c, cx + 1, top + 5, 2, 2, '#222'); R(c, cx - 3, top + 5, 1, 1, '#fff'); R(c, cx + 1, top + 5, 1, 1, '#fff'); }
+    else { R(c, cx - 3 + lk, top + 5, 2, 2, '#222'); R(c, cx + 1 + lk, top + 5, 2, 2, '#222'); R(c, cx - 3 + lk, top + 5, 1, 1, '#fff'); R(c, cx + 1 + lk, top + 5, 1, 1, '#fff'); }
     R(c, cx - 5, top + 8, 2, 1, shade('#e07a6a', 0)); R(c, cx + 3, top + 8, 2, 1, '#e07a6a'); // blush
     if (m === 'happy') { R(c, cx - 2, top + 9, 4, 1, '#7a2a2a'); R(c, cx - 3, top + 8, 1, 1, '#7a2a2a'); R(c, cx + 2, top + 8, 1, 1, '#7a2a2a'); }
     else if (m === 'worried') { R(c, cx - 1, top + 8, 2, 2, '#5a1a1a'); }
-    else R(c, cx - 1, top + 9, 2, 1, '#8a4a3a');
+    else if (m === 'yawn') { R(c, cx - 2, top + 8, 4, 3, '#5a1a1a'); R(c, cx - 1, top + 10, 2, 1, '#c0544a'); }
+    else if (m === 'read') R(c, cx - 1, top + 9, 2, 1, '#8a4a3a');
+    else R(c, cx - 1 + lk, top + 9, 2, 1, '#8a4a3a');
     // hair on top
     switch (style) {
       case 'long':
@@ -149,6 +154,26 @@
     line(c, sx, sy, ex, ey, ac, 2);
     line(c, ex, ey, hx, hy - 1, ac, 2);
     R(c, hx - 1, hy - 1, 3, 3, look.skin);
+  }
+
+  function bmp(c, x, y, rows, col) {
+    c.fillStyle = col;
+    rows.forEach((r, j) => { for (let i = 0; i < r.length; i++) if (r[i] === '#') c.fillRect(x + i, y + j, 1, 1); });
+  }
+  const SYMS = [
+    null, // dots (drawn with rects)
+    { rows: ['..#..', '..#..', '..#..', '..#..', '.....', '..#..'], col: '#e5484d' },
+    { rows: ['.###.', '#...#', '...#.', '..#..', '.....', '..#..'], col: '#3e8ef7' },
+    { rows: ['.#.#.', '#####', '#####', '.###.', '..#..'], col: '#e93d82' },
+    { rows: ['...##', '...#.', '...#.', '##.#.', '##...'], col: '#8e4ec6' },
+  ];
+  /** Small speech-bubble icon (used while two idle agents chat). */
+  function drawTalk(c, x, y, sym, dir) {
+    const o = '#2b2f3b';
+    R(c, x - 7, y - 11, 14, 11, o); R(c, x - 8, y - 10, 16, 9, o); R(c, x - 6, y - 10, 12, 9, '#fff'); R(c, x - 7, y - 9, 14, 7, '#fff');
+    R(c, x - 2 + dir * 2, y, 3, 2, o); R(c, x - 1 + dir * 2, y - 1, 1, 2, '#fff');
+    if (sym === 0) { for (let i = 0; i < 3; i++) R(c, x - 5 + i * 4, y - 6, 2, 2, o); }
+    else { const d = SYMS[sym]; bmp(c, x - 2, y - 9 + (d.rows.length < 6 ? 1 : 0), d.rows, d.col); }
   }
 
   function stateIcon(c, cx, top, state, t) {
@@ -216,18 +241,26 @@
     const here = ag && !ag.away;
     const st = ag ? ag.state : 'off';
     const ph = ag ? ag.phase : 0;
-    const mood = st === 'error' ? 'worried' : st === 'done' ? 'happy' : 'normal';
+    let mood = st === 'error' ? 'worried' : st === 'done' ? 'happy' : 'normal';
+    const act = here && st === 'idle' && ag.act ? ag.act : null;
+    const ap = ag && ag.actP || 0;
+    let lk = 0, k = 0;
+    if (act === 'look') lk = [0, -1, -1, 0, 1, 1][Math.floor(ap / 0.9) % 6];
+    if (act === 'stretch') { k = Math.min(ap / 0.5, 1) * (ap < 2.4 ? 1 : Math.max(0, (2.9 - ap) / 0.5)); if (k > 0.5) mood = 'yawn'; }
+    if (act === 'read') mood = 'read';
     let by = 0;
     if (here) {
       if (st === 'idle') by = Math.sin(t * 2.2 + ph * 6) >= 0 ? 1 : 0;
       else if (st === 'done') by = -Math.floor(Math.abs(Math.sin(t * 6)) * 2);
       else if (st === 'working') by = Math.floor(t * 6 + ph) % 4 === 0 ? 1 : 0;
       else if (st === 'thinking') by = Math.sin(t * 1.5 + ph * 6) >= 0.4 ? 1 : 0;
+      if (act === 'stretch') by = -Math.round(k);
+      if (act === 'read') by = 1;
       const blink = ((t * 1000 + ph * 3600) % 3600) < 140;
       const look = ag.look;
       R(c, cx - 7, cy - 24 + by, 14, 20, look.shirt); R(c, cx - 7, cy - 14 + by, 14, 1, shade(look.shirt, -30));
       R(c, cx - 2, cy - 25 + by, 4, 2, shade(look.skin, -25));
-      drawHead(c, cx, cy - 35 + by, look, { blink, mood });
+      drawHead(c, cx + lk, cy - 35 + by, look, { blink, mood, look: lk });
     }
     // desk
     R(c, cx - 28, cy - 7, 56, 14, '#b98a56'); R(c, cx - 28, cy - 7, 56, 1, '#dcae74'); R(c, cx - 28, cy + 6, 56, 1, '#8c6339');
@@ -253,8 +286,20 @@
       } else if (st === 'thinking') { Rr = [cx + 3, cy - 21 + by]; }
       else if (st === 'done') { const b = Math.floor(Math.abs(Math.sin(t * 6)) * 3); L = [cx - 12, cy - 32 - b]; Rr = [cx + 12, cy - 32 - b]; }
       else if (st === 'error') { const j = Math.floor(t * 8) % 2; L = [cx - 8 - j, cy - 30]; Rr = [cx + 8 + j, cy - 30]; }
+      if (act === 'stretch') {
+        L = [kb.lx + (cx - 13 - kb.lx) * k, kb.y + (cy - 39 - kb.y) * k]; Rr = [kb.rx + (cx + 13 - kb.rx) * k, kb.y + (cy - 39 - kb.y) * k];
+      } else if (act === 'read') { L = [cx - 9, cy - 11]; Rr = [cx + 9, cy - 11]; }
       arm(c, cx - 7, cy - 21 + by, L[0], L[1], look, -1);
       arm(c, cx + 6, cy - 21 + by, Rr[0], Rr[1], look, 1);
+      if (act === 'read') {
+        const cov = ['#8e4ec6', '#3e8ef7', '#e5484d', '#30a46c'][ag.slot % 4], by2 = by;
+        R(c, cx - 8, cy - 20 + by2, 16, 11, cov); R(c, cx - 7, cy - 19 + by2, 7, 8, '#fffbe8'); R(c, cx, cy - 19 + by2, 7, 8, '#fffbe8');
+        R(c, cx - 1, cy - 19 + by2, 2, 8, '#d9cfa8');
+        const pg = Math.floor(ap / 2.2) % 3;
+        for (let i = 0; i < 3; i++) { R(c, cx - 6, cy - 18 + by2 + i * 2 + 1, 4 + ((i + pg) % 2), 1, '#9a8f6a'); R(c, cx + 2, cy - 18 + by2 + i * 2 + 1, 4 - ((i + pg) % 2), 1, '#9a8f6a'); }
+        if ((ap % 2.2) < 0.25) { R(c, cx + 1, cy - 19 + by2, 3, 8, '#e9e0bd'); R(c, cx + 3, cy - 20 + by2, 1, 9, '#cfc59a'); }
+        R(c, cx - 8, cy - 10 + by2, 16, 1, shade(cov, -40));
+      }
     }
     drawMonitor(c, cx, cy, ag ? (ag.away ? 'idle' : st) : 'off', t, ph, ag && ag.look.shirt);
     if (here) stateIcon(c, cx, cy - 35 + by, st, t);
@@ -270,8 +315,9 @@
     R(c, x - 7, fy - 24, 14, 15, look.shirt); R(c, x - 7, fy - 11, 14, 1, shade(look.shirt, -30));
     R(c, x - 2, fy - 25, 4, 2, shade(look.skin, -25));
     const blink = ((t * 1000 + ag.phase * 3600) % 3600) < 140;
-    const mood = ag.state === 'error' ? 'worried' : ag.mode === 'drink' ? 'happy' : 'normal';
-    drawHead(c, x, fy - 36, look, { blink, mood });
+    const mood = ag.state === 'error' ? 'worried' : (ag.mode === 'drink' || ag.mode === 'chat') ? 'happy' : 'normal';
+    const nod = ag.mode === 'chat' && ag.talk == null && Math.floor(t * 3) % 4 === 0 ? 1 : 0;
+    drawHead(c, x, fy - 36 + nod, look, { blink, mood });
     const sw = walking ? (ph ? 1 : -1) : 0;
     if (ag.mode === 'drink') {
       const sip = Math.floor(t * 1.5) % 2;
@@ -280,11 +326,16 @@
       arm(c, x + 6, fy - 22, hx, hy, look, 1);
       R(c, hx - 2, hy - 5, 5, 5, '#f5f5f0'); R(c, hx + 3, hy - 4, 1, 3, '#f5f5f0'); R(c, hx - 2, hy - 5, 5, 1, '#5b3a1e');
       const s = Math.floor(t * 4) % 2; R(c, hx - 1 + s, hy - 8, 1, 2, 'rgba(255,255,255,.8)');
+    } else if (ag.mode === 'chat' && ag.talk != null) {
+      const g = Math.floor(t * 4) % 2;
+      arm(c, x - 7, fy - 22, x - 9, fy - 12, look, -1);
+      arm(c, x + 6, fy - 22, x + 9 + (ag.talkDir > 0 ? 1 : -3), fy - 28 - g * 2, look, 1);
     } else {
       arm(c, x - 7, fy - 22, x - 9, fy - 12 + sw, look, -1);
       arm(c, x + 6, fy - 22, x + 8, fy - 12 - sw, look, 1);
     }
     stateIcon(c, x, fy - 36, ag.state, t);
+    if (ag.mode === 'chat' && ag.talk != null) drawTalk(c, x + ag.talkDir * 6, fy - 40, ag.talk, ag.talkDir);
   }
 
   function dashedRect(c, x, y, w, h, col, t) {
@@ -320,6 +371,16 @@
     ctx.fillStyle = fg; ctx.fillText(text, Math.round(x - w / 2), Math.round(y + U * 0.5));
     return w + pad * 2;
   }
+
+  function measurePill(ctx, text, U, bold) {
+    ctx.font = `${bold ? 'bold ' : ''}${Math.round(11 * U)}px ${FONT}`;
+    return Math.ceil(ctx.measureText(text).width) + Math.round(5 * U) * 2;
+  }
+  const TYPE_BADGE = {
+    claude: { text: 'Claude', bg: '#d97757', fg: '#2a1208' },
+    cursor: { text: 'Cursor', bg: '#e6e8f5', fg: '#14151f' },
+    mock: { text: 'Mock', bg: '#5a5f7a', fg: '#fff' },
+  };
 
   function drawBubble(ctx, text, cx, bottom, S, U, W2) {
     ctx.font = `${Math.round(11 * U)}px ${FONT}`;
@@ -387,8 +448,15 @@
       const sel = e.id === scene.selectedId;
       const labY = (s.cy + 28) * S;
       const dotCol = STATE_COL[e.state] || '#999';
-      const w = pillText(ctx, '   ' + e.name, s.cx * S, labY, U, sel ? '#14151f' : '#fff', sel ? '#f5c542' : 'rgba(20,21,31,.85)', sel);
-      ctx.fillStyle = dotCol; ctx.fillRect(Math.round(s.cx * S - w / 2 + 5 * U), Math.round(labY - 3 * U), Math.round(5 * U), Math.round(5 * U));
+      const tb = TYPE_BADGE[e.type];
+      const nameTxt = '   ' + e.name;
+      const nw = measurePill(ctx, nameTxt, U, sel);
+      const bw = tb ? measurePill(ctx, tb.text, U * 0.8, true) : 0;
+      const gap = tb ? Math.round(3 * U) : 0;
+      const left = s.cx * S - (nw + gap + bw) / 2;
+      const w = pillText(ctx, nameTxt, left + nw / 2, labY, U, sel ? '#14151f' : '#fff', sel ? '#f5c542' : 'rgba(20,21,31,.85)', sel);
+      ctx.fillStyle = dotCol; ctx.fillRect(Math.round(left + 5 * U), Math.round(labY - 3 * U), Math.round(5 * U), Math.round(5 * U));
+      if (tb) pillText(ctx, tb.text, left + nw + gap + bw / 2, labY, U * 0.8, tb.fg, tb.bg, true);
       if (e.state === 'working' && e.tool) pillText(ctx, e.tool, (s.cx + 20) * S, (s.cy - 29) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
       else if (e.state === 'working') pillText(ctx, 'typing…', (s.cx + 20) * S, (s.cy - 29) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
       if (e.queued) pillText(ctx, '+' + e.queued + ' queued', s.cx * S, (s.cy + 38) * S, U * 0.85, '#14151f', '#f5c542', true);
@@ -410,9 +478,12 @@
     return null;
   }
 
-  function coffeePath(slot) {
+  // Standing spots near the coffee machine: one sipper, or two chatters side by side.
+  const SPOTS = { coffee: [{ x: COFFEE.x, y: COFFEE.y }], chat: [{ x: 336, y: 108 }, { x: 362, y: 108 }] };
+  /** Path from a desk to a spot: out the side gap, along the aisle, then up to the spot. */
+  function walkPath(slot, spot) {
     const s = SLOTS[slot], ay = AISLE[s.row];
-    return [{ x: s.cx + 33, y: s.cy + 2 }, { x: s.cx + 38, y: ay }, { x: COFFEE.x, y: ay }, { x: COFFEE.x, y: COFFEE.y }];
+    return [{ x: s.cx + 33, y: s.cy + 2 }, { x: s.cx + 38, y: ay }, { x: spot.x, y: ay }, { x: spot.x, y: spot.y }];
   }
 
   function drawAvatar(canvas, look) {
@@ -421,5 +492,5 @@
     drawHead(c, 10, 8, look, { mood: 'happy' });
   }
 
-  window.Office = { W, H, SLOTS, MAX_SLOTS, render, hitTest, coffeePath, drawAvatar, COFFEE, AISLE };
+  window.Office = { W, H, SLOTS, MAX_SLOTS, render, hitTest, walkPath, SPOTS, drawAvatar, COFFEE, AISLE };
 })();

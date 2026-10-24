@@ -7,7 +7,8 @@
     "start": "node server.js",
     "start:mock": "HARNESS_MODE=mock node server.js",
     "start:claude": "HARNESS_MODE=claude node server.js",
-    "screenshots": "node scripts/screenshots.js"
+    "screenshots": "node scripts/screenshots.js",
+    "test:adapters": "node scripts/test-adapters.js"
   },
   "engines": { "node": ">=18" },
   "license": "MIT",

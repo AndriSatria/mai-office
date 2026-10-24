@@ -4,19 +4,19 @@ const path = require('path');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 const { Harness } = require('./lib/harness');
-const { createAdapter } = require('./lib/adapters');
+const { createRegistry } = require('./lib/adapters');
 
 const PORT = Number(process.env.PORT) || 3000;
 // Loopback by default: this server can run commands via Claude Code in arbitrary dirs.
 const HOST = process.env.HOST || '127.0.0.1';
 const DATA_FILE = process.env.HARNESS_DATA || path.join(__dirname, 'data', 'agents.json');
 
-const adapter = createAdapter();
-const harness = new Harness({ dataFile: DATA_FILE, adapter });
+const registry = createRegistry();
+const harness = new Harness({ dataFile: DATA_FILE, registry });
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/api/health', (_req, res) => res.json({ ok: true, mode: adapter.mode, agents: harness.agents.size }));
+app.get('/api/health', (_req, res) => res.json({ ok: true, defaultType: registry.defaultType, types: Object.fromEntries(Object.values(registry.types).map((t) => [t.id, t.available])), agents: harness.agents.size }));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({
@@ -53,8 +53,9 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Virtual Harness running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}  (mode: ${adapter.mode})`);
-  if (adapter.mode === 'mock') console.log('Mock mode: agents are simulated. Install Claude Code or set HARNESS_MODE=claude to use the real thing.');
+  console.log(`Virtual Harness running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}  (default agent type: ${registry.defaultType})`);
+  console.log('Available agent types: ' + Object.values(registry.types).map((t) => `${t.id}${t.available ? '' : ' (CLI not found)'}`).join(', '));
+  if (registry.defaultType === 'mock') console.log('Mock default: new agents are simulated. Install Claude Code / Cursor CLI or set HARNESS_MODE to use the real thing.');
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { harness.shutdown(); process.exit(0); });
