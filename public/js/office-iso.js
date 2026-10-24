@@ -576,8 +576,8 @@
       pillText(ctx, nameTxt, left + nw / 2, labY, U, sel ? '#14151f' : '#fff', sel ? '#f5c542' : 'rgba(20,21,31,.85)', sel);
       ctx.fillStyle = dotCol; ctx.fillRect(Math.round(left + 5 * U), Math.round(labY - 3 * U), Math.round(5 * U), Math.round(5 * U));
       if (tb) pillText(ctx, tb.text, left + nw + gap + bw / 2, labY, U * 0.8, tb.fg, tb.bg, true);
-      const mx = sx(s.dx + 0.5, s.dy + 1.625) * S, my = (sy(s.dx + 0.5, s.dy + 1.625, 27) - 6) * S;
-      if (!e.away && e.state === 'working') pillText(ctx, e.tool || 'typing…', mx, my, U * 0.9, '#0e1f1a', '#5ff2a5', true);
+      // tool chip floats just above the head (over the monitor it would cover the face)
+      if (!e.away && e.state === 'working') pillText(ctx, e.tool || 'typing…', p.ax * S, (p.head - 5) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
       if (e.queued) pillText(ctx, '+' + e.queued + ' queued', labX * S, (lp[1] + 11) * S, U * 0.85, '#14151f', '#f5c542', true);
       if (e.bubble) drawBubble(ctx, e.bubble, p.ax * S, (p.head - 18) * S, S, U, canvas.width);
     }

@@ -9,7 +9,8 @@
     "start:claude": "HARNESS_MODE=claude node server.js",
     "screenshots": "node scripts/screenshots.js",
     "test:adapters": "node scripts/test-adapters.js",
-    "test:iso": "node scripts/test-iso.js"
+    "test:iso": "node scripts/test-iso.js",
+    "screenshots:hd": "node scripts/screenshots-hd.js"
   },
   "engines": {
     "node": ">=18"

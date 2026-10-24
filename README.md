@@ -187,7 +187,11 @@ npm run screenshots     # uses the fake claude/cursor CLIs so all agent types ap
 
 Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, wandering, coffee break, fire),
 `10-idle-stretch-read-look`, `11`/`11b-idle-chat-at-coffee`, `12-hire-dialog-agent-type`, `13-flat-view-fallback` (`?view=flat`),
-`14-hover-empty-desk`. (`07-wandering` is the walking agent.) Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
+`14-hover-empty-desk`. (`07-wandering` is the walking agent.)
+
+**HD shots:** `npm run screenshots:hd` renders a 1920×1080 viewport at deviceScaleFactor 2 and saves 3840×2160 PNGs to `screenshots/hd/`
+(idle variety, working + tool chip, thinking + done bubble, coffee chat). The canvas backing store is in device pixels with an integer
+scale (×7 at DPR 2), so nothing is resampled; the script asserts this before capturing. Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
 
 ## Known limitations / ideas
 
