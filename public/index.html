@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Virtual Harness</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header id="topbar">
+    <div class="logo">▣ VIRTUAL HARNESS</div>
+    <span id="modeBadge" class="badge">…</span>
+    <span id="conn" class="badge off">offline</span>
+    <div class="spacer"></div>
+    <button id="hireBtn" class="btn green">＋ Hire agent</button>
+    <button id="fireBtn" class="btn red" disabled>✖ Fire agent</button>
+  </header>
+
+  <main>
+    <section id="stage"><canvas id="office" width="384" height="240"></canvas></section>
+
+    <aside id="chat">
+      <div id="chatEmpty">
+        <div class="big">☝</div>
+        <p>Click a pixel person to open their chat.</p>
+        <p class="dim">No agents yet? Hit <b>Hire agent</b> or click an empty desk.</p>
+      </div>
+      <div id="chatBody" hidden>
+        <div id="chatHead">
+          <canvas id="avatar" width="20" height="26"></canvas>
+          <div class="meta">
+            <div id="chatName">—</div>
+            <div id="chatCwd" class="dim">—</div>
+          </div>
+          <span id="chatState" class="pill idle">idle</span>
+        </div>
+        <div id="transcript"></div>
+        <form id="composer">
+          <textarea id="input" rows="2" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+          <div class="row">
+            <span id="queueInfo" class="dim"></span>
+            <button type="button" id="stopBtn" class="btn red small" hidden>■ Stop</button>
+            <button type="submit" class="btn green small">Send ⏎</button>
+          </div>
+        </form>
+      </div>
+    </aside>
+  </main>
+
+  <dialog id="hireDlg">
+    <form id="hireForm" method="dialog">
+      <h3>Hire a new agent</h3>
+      <label>Name <input id="hireName" maxlength="24" required autocomplete="off"></label>
+      <label>Working directory <input id="hireCwd" autocomplete="off" spellcheck="false"></label>
+      <div class="row">
+        <button type="button" id="hireCancel" class="btn">Cancel</button>
+        <button type="submit" id="hireOk" class="btn green">Hire</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" hidden></div>
+
+  <script src="js/office.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
