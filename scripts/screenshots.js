@@ -10,7 +10,7 @@ const { chromium } = require('playwright');
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'screenshots');
 const PORT = process.env.SHOT_PORT || 3111;
-const DATA = path.join(os.tmpdir(), `vh-shots-${Date.now()}.json`);
+const DATA = path.join(os.tmpdir(), `mai-office-shots-${Date.now()}.json`);
 fs.mkdirSync(OUT, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

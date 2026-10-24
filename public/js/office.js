@@ -1,4 +1,4 @@
-/* Virtual Harness - procedural pixel-art office renderer.
+/* mAI office - procedural pixel-art office renderer.
  * Everything is drawn with fillRect on a small logical canvas (384x240) and then
  * blitted to the visible canvas with integer scaling and smoothing disabled.
  * Text (names, tool chips, speech bubbles) is drawn on the visible canvas at native res. */

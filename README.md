@@ -1,6 +1,6 @@
-# ▣ Virtual Harness
+# ▣ mAI office
 
-A pixel-art office where every **Claude Code** agent is an animated little person at its own desk.
+**mAI office** is a pixel-art office where every **Claude Code** / **Cursor** agent is an animated little person at its own desk.
 Click a person, type to them, and your message goes to that agent's Claude Code session; the reply streams back
 into a chat panel and a speech bubble over their head.
 

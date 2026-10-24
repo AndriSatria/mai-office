@@ -1,7 +1,7 @@
 {
-  "name": "virtual-harness",
+  "name": "mai-office",
   "version": "0.1.0",
-  "description": "A pixel-art office where every Claude Code agent is an animated little person you can click and talk to.",
+  "description": "mAI office - a pixel-art office where every AI coding agent (Claude Code, Cursor CLI) is an animated little person you can click and talk to.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

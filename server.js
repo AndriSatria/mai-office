@@ -53,7 +53,7 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Virtual Harness running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}  (default agent type: ${registry.defaultType})`);
+  console.log(`mAI office running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}  (default agent type: ${registry.defaultType})`);
   console.log('Available agent types: ' + Object.values(registry.types).map((t) => `${t.id}${t.available ? '' : ' (CLI not found)'}`).join(', '));
   if (registry.defaultType === 'mock') console.log('Mock default: new agents are simulated. Install Claude Code / Cursor CLI or set HARNESS_MODE to use the real thing.');
 });

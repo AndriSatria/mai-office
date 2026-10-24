@@ -8,7 +8,7 @@ const os = require('os');
 const WebSocket = require('ws');
 const ROOT = path.join(__dirname, '..');
 const PORT = 3131;
-const DATA = path.join(os.tmpdir(), `vh-adapters-${Date.now()}.json`);
+const DATA = path.join(os.tmpdir(), `mai-office-adapters-${Date.now()}.json`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode = 1; } else console.log('ok  :', m); };
 

@@ -1,4 +1,4 @@
-/* Virtual Harness frontend: websocket client, chat panel, animation state. */
+/* mAI office frontend: websocket client, chat panel, animation state. */
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
