@@ -1,4 +1,5 @@
-/* mAI office - procedural pixel-art office renderer.
+/* mAI office - FLAT (top-down) procedural pixel-art renderer, used with ?view=flat.
+ * (The default view is the isometric renderer in office-iso.js.)
  * Everything is drawn with fillRect on a small logical canvas (384x240) and then
  * blitted to the visible canvas with integer scaling and smoothing disabled.
  * Text (names, tool chips, speech bubbles) is drawn on the visible canvas at native res. */
@@ -492,5 +493,8 @@
     drawHead(c, 10, 8, look, { mood: 'happy' });
   }
 
-  window.Office = { W, H, SLOTS, MAX_SLOTS, render, hitTest, walkPath, SPOTS, drawAvatar, COFFEE, AISLE };
+  window.OfficeFlat = { W, H, SLOTS, MAX_SLOTS, render, hitTest, walkPath, SPOTS, drawAvatar, COFFEE, AISLE,
+    SPEED: 40, STEP: 0.5, // walking speed in world units/s (px here) and canvas scale step
+    // helpers re-used by the isometric renderer
+    shared: { R, shade, rnd, disc, line, bmp, stateIcon, drawTalk, pillText, measurePill, drawBubble, TYPE_BADGE, STATE_COL, dashedRect } };
 })();

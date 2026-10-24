@@ -9,6 +9,10 @@
   const params = new URLSearchParams(location.search);
   // ?wander=off disables idle behaviour entirely, ?wander=fast makes it happen every few seconds
   const WANDER = params.get('wander') !== 'off';
+  // default view is isometric; ?view=flat switches to the old top-down renderer
+  const VIEW = params.get('view') === 'flat' ? 'flat' : 'iso';
+  const Office = VIEW === 'flat' ? window.OfficeFlat : window.OfficeIso;
+  window.Office = Office;
   const WANDER_FAST = params.get('wander') === 'fast';
   const rand = (a, b) => a + Math.random() * (b - a);
   const TYPE_INFO = {
@@ -203,7 +207,7 @@
         if (beat % 2 === a.chatSide) talk = Math.floor(beat / 2 + a.chatSide * 2) % 5;
       }
       return { id: a.id, name: a.name, type: a.type, slot: a.slot, look: a.look, state: a.state, tool: a.tool, queued: a.queued,
-        phase: a.phase, away: a.away, x: a.x, y: a.y, mode: a.mode, bubble,
+        phase: a.phase, away: a.away, x: a.x, y: a.y, face: a.face || 0, mode: a.mode, bubble,
         act: a.act ? a.act.kind : null, actP: a.act ? (now - a.act.t0) / 1000 : 0, talk, talkDir: a.chatSide === 0 ? 1 : -1 };
     });
   }
@@ -227,7 +231,8 @@
   // ---------- idle behaviour ----------
   // Idle agents (not selected / hovered / busy) occasionally: stretch, read, look around (at the desk),
   // sip coffee, or meet another idle agent by the coffee machine for a chat. Anything non-idle sends them home.
-  const SPEED = 40;
+  const SPEED = Office.SPEED;     // world units per second (px in the flat view, tiles in the iso view)
+  const faceOf = (dx, dy) => (Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3)); // 0 SE 1 SW 2 NW 3 NE
   const wantsHome = (a) => (a.state !== 'idle' && a.state !== 'done') || a.id === selectedId;
   const socialBusy = () => { for (const a of agents.values()) if (a.away) return true; return false; };
   const canStart = (a) => !a.away && !a.act && a.state === 'idle' && a.id !== selectedId;
@@ -235,7 +240,7 @@
 
   function startWalk(a, spot, dest) {
     a.pts = Office.walkPath(a.slot, spot); a.idx = 0; a.x = a.pts[0].x; a.y = a.pts[0].y;
-    a.away = true; a.mode = 'walk'; a.dest = dest; a.dir = 1; a.target = 1; a.chatStart = 0; a.waitSince = 0;
+    a.spot = spot; a.face = 0; a.away = true; a.mode = 'walk'; a.dest = dest; a.dir = 1; a.target = 1; a.chatStart = 0; a.waitSince = 0;
   }
   function startActivity(a, kind, partner, now) {
     now = now || performance.now();
@@ -275,12 +280,13 @@
       a.x = p.x; a.y = p.y; a.idx = a.target;
       if (a.dir === 1) {
         if (a.target === a.pts.length - 1) {
+          if (a.spot && a.spot.face !== undefined) a.face = a.spot.face;
           if (a.dest === 'drink') { a.mode = 'drink'; a.drinkUntil = now + (WANDER_FAST ? 4000 : rand(5000, 10000)); }
           else { a.mode = 'chat'; a.waitSince = now; }
         } else a.target++;
       } else if (a.target === 0) { a.away = false; a.mode = 'sit'; a.partner = null; endAct(a, now); }
       else a.target--;
-    } else { a.x += (dx / d) * stepLen; a.y += (dy / d) * stepLen; }
+    } else { a.x += (dx / d) * stepLen; a.y += (dy / d) * stepLen; a.face = faceOf(dx, dy); }
   }
   function update(dt, now) {
     for (const a of agents.values()) {
@@ -296,8 +302,9 @@
   function resize() {
     const stage = $('stage'); const dpr = window.devicePixelRatio || 1;
     const aw = stage.clientWidth * dpr, ah = stage.clientHeight * dpr;
-    // integer scale when it fits nicely, otherwise half steps (nearest-neighbour either way)
-    S = Math.max(1, Math.floor(Math.min(aw / Office.W, ah / Office.H) * 2) / 2); U = dpr;
+    // iso view: strictly integer scale; flat view: integer or half steps (nearest-neighbour either way)
+    const step = 1 / Office.STEP;
+    S = Math.max(1, Math.floor(Math.min(aw / Office.W, ah / Office.H) * step) / step); U = dpr;
     canvas.width = Math.round(Office.W * S); canvas.height = Math.round(Office.H * S);
     canvas.style.width = (canvas.width / dpr) + 'px'; canvas.style.height = (canvas.height / dpr) + 'px';
   }
@@ -312,7 +319,7 @@
 
   // handy for tests / debugging in the console
   window.harness = {
-    agents, select, send,
+    agents, select, send, view: VIEW, get selected() { return selectedId; }, get hover() { return { id: hoverId, slot: hoverSlot }; },
     states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind })),
     // kind: coffee | chat (needs partnerId) | stretch | read | look   (ignores timers/eligibility; for demos & tests)
     forceActivity: (id, kind, partnerId) => { const a = agents.get(id); if (a && !a.away) startActivity(a, kind, partnerId ? agents.get(partnerId) : null); },

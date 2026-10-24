@@ -1,6 +1,7 @@
 'use strict';
 // Starts the server in mock mode on a scratch port + data file, drives the UI with
 // Playwright (hire, chat, wander) and saves screenshots to ./screenshots.
+// The default view is isometric; the last shot uses ?view=flat.
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -84,6 +85,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.waitForFunction(() => !window.harness.states().some((a) => a.name === 'Grace'));
     await sleep(500);
     await shot('09-after-fire.png');
+    // hovering an empty desk: green isometric outline + "hire" pill (real mouse through the canvas)
+    {
+      const box = await page.locator('#office').boundingBox();
+      const [mx, my] = await page.evaluate((box) => { const O = window.Office; const [x, y] = O.deskPoint(5); return [box.x + (x / O.W) * box.width, box.y + (y / O.H) * box.height]; }, box);
+      await page.mouse.move(mx, my); await sleep(300);
+      await shot('14-hover-empty-desk.png');
+      await page.mouse.move(5, 5);
+    }
 
     // Idle variety: stretching, reading, looking around at the desks
     await page.evaluate(() => window.harness.select(null));
@@ -106,6 +115,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await shot('11-idle-chat-at-coffee.png');
     await sleep(1700);
     await shot('11b-idle-chat-reply.png');
+    // The old top-down view is still available with ?view=flat
+    const flat = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+    await flat.goto(`http://localhost:${PORT}/?wander=off&view=flat`);
+    await flat.waitForSelector('#conn.on'); await sleep(800);
+    await flat.screenshot({ path: path.join(OUT, '13-flat-view-fallback.png') }); console.log('saved 13-flat-view-fallback.png');
+    await flat.close();
     console.log('final states', JSON.stringify(await states()));
   } finally {
     await browser.close();
