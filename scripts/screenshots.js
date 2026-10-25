@@ -16,6 +16,20 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Team scenario shared by both screenshot scripts: parent + 3 parallel helpers mid-work, then a result handoff in mid-air.
+async function teamShots(page, parentName, task, shotMid, shotHandoff, sleep) {
+  const pid = await page.evaluate((n) => { const a = [...window.harness.agents.values()].find((x) => x.name === n); window.harness.select(a.id); return a.id; }, parentName);
+  await page.fill('#input', '/team ' + task); await page.press('#input', 'Enter');
+  await page.waitForFunction((id) => { const h = window.harness.helpers(id); return h.length === 3 && h.every((x) => x.state === 'working' && x.tool); }, pid, { timeout: 20000 });
+  await sleep(450);
+  await shotMid();
+  await page.waitForFunction(() => window.harness.flights().some((f) => f.kind === 'back'), null, { timeout: 20000 });
+  await sleep(380);
+  await shotHandoff();
+  await page.waitForFunction((n) => window.harness.states().find((a) => a.name === n).state === 'done', parentName, { timeout: 30000 });
+  await sleep(300);
+}
+
 (async () => {
   // claude/cursor agents use the stand-in CLIs in scripts/ so every agent type can be demoed without installs
   const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, env: { ...process.env, PORT, HARNESS_MODE: 'mock', HARNESS_DATA: DATA, HARNESS_DEFAULT_CWD: ROOT,
@@ -93,6 +107,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await shot('14-hover-empty-desk.png');
       await page.mouse.move(5, 5);
     }
+
+    // Team task: a parent spawns 3 parallel helpers (mock /team); then the result handoff in mid-air
+    await page.evaluate(() => window.harness.select(null));
+    await page.waitForFunction(() => window.harness.states().every((a) => !a.away && a.state !== 'working' && a.state !== 'thinking'), null, { timeout: 20000 });
+    await teamShots(page, 'Ada', 'refactor the auth module', () => shot('15-team-3-parallel-helpers.png'), () => shot('16-team-result-handoff.png'), sleep);
+    // agent-to-agent: a letter flies from Ada to Ken
+    await page.selectOption('#relayTo', { label: '→ Ken' });
+    await page.fill('#input', 'can you review my diff?'); await page.press('#input', 'Enter');
+    await page.waitForFunction(() => window.harness.flights().some((f) => f.kind === 'letter'), null, { timeout: 5000 });
+    await sleep(520);
+    await shot('17-agent-to-agent-letter.png');
+    await waitState('Ken', 'done', 25000);
+    await page.evaluate(() => window.harness.select(null));
+    await sleep(500);
 
     // Idle variety: stretching, reading, looking around at the desks
     await page.evaluate(() => window.harness.select(null));

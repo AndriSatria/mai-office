@@ -16,6 +16,20 @@ const DATA = path.join(os.tmpdir(), `mai-office-hd-${Date.now()}.json`);
 fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Team scenario shared by both screenshot scripts: parent + 3 parallel helpers mid-work, then a result handoff in mid-air.
+async function teamShots(page, parentName, task, shotMid, shotHandoff, sleep) {
+  const pid = await page.evaluate((n) => { const a = [...window.harness.agents.values()].find((x) => x.name === n); window.harness.select(a.id); return a.id; }, parentName);
+  await page.fill('#input', '/team ' + task); await page.press('#input', 'Enter');
+  await page.waitForFunction((id) => { const h = window.harness.helpers(id); return h.length === 3 && h.every((x) => x.state === 'working' && x.tool); }, pid, { timeout: 20000 });
+  await sleep(450);
+  await shotMid();
+  await page.waitForFunction(() => window.harness.flights().some((f) => f.kind === 'back'), null, { timeout: 20000 });
+  await sleep(380);
+  await shotHandoff();
+  await page.waitForFunction((n) => window.harness.states().find((a) => a.name === n).state === 'done', parentName, { timeout: 30000 });
+  await sleep(300);
+}
+
 (async () => {
   const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, PORT, HARNESS_MODE: 'mock', HARNESS_DATA: DATA, HARNESS_DEFAULT_CWD: ROOT,
     HARNESS_CLAUDE_BIN: path.join(__dirname, 'fake-claude.js'), HARNESS_CURSOR_BIN: path.join(__dirname, 'fake-cursor-agent.js') } });
@@ -89,6 +103,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await page.waitForFunction(() => window.harness.states().filter((a) => a.mode === 'chat').length === 2, null, { timeout: 30000 });
     await sleep(1000);
     await shot('04-idle-chat-at-coffee-hd.png');
+
+    // 5/6) parent with 3 parallel helpers mid-work, then a result handoff (envelope flying back, dotted links, "waiting on N helpers")
+    await page.evaluate(() => window.harness.select(null));
+    await idle();
+    await teamShots(page, 'Ada', 'refactor the auth module', () => shot('05-team-3-parallel-helpers-hd.png'), () => shot('06-team-result-handoff-hd.png'), sleep);
   } finally {
     await browser.close(); srv.kill('SIGTERM');
     try { fs.unlinkSync(DATA); } catch (_) {}

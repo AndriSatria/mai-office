@@ -49,6 +49,19 @@ main { flex: 1; display: flex; min-height: 0; }
 .msg.assistant.streaming::after { content: "▌"; animation: blink 0.8s steps(1) infinite; }
 .msg.tool { align-self: flex-start; background: transparent; border: none; border-left: 3px solid #2f7fa8; color: #7fd6ff; font-size: 11px; padding: 0 0 0 8px; }
 .msg.system { align-self: center; background: transparent; border: none; color: var(--dim); font-size: 11px; text-align: center; }
+details.msg.sub { align-self: flex-start; max-width: 96%; background: transparent; border: none; border-left: 3px solid #f5c542; color: #e9d99a; font-size: 11px; padding: 0 0 0 8px; white-space: normal; }
+details.msg.sub summary { cursor: pointer; list-style: none; }
+details.msg.sub summary::-webkit-details-marker { display: none; }
+details.msg.sub summary::after { content: " ▾"; color: var(--dim); }
+details.msg.sub[open] summary::after { content: " ▴"; }
+details.msg.sub.finished { border-left-color: #30a46c; color: #9fe0bd; }
+details.msg.sub.failed { border-left-color: var(--red); color: #ffb3b6; }
+details.msg.sub.lost { border-left-color: var(--dim); color: var(--dim); }
+details.msg.sub .subLog { margin: 3px 0 2px; color: #b9bfd6; }
+details.msg.sub .subLog div { white-space: pre-wrap; word-break: break-word; }
+details.msg.sub .subRes { margin-top: 3px; color: #dfe3f2; font-style: italic; }
+select.relay { font: inherit; font-size: 11px; color: var(--text); background: #12131d; border: 2px solid var(--line); padding: 3px 4px; max-width: 120px; }
+select.relay.on { border-color: #6cb6ff; color: #6cb6ff; }
 .msg.error { align-self: stretch; max-width: 100%; background: #3a1a1e; border-color: var(--red); color: #ffb3b6; }
 @keyframes blink { 50% { opacity: 0; } }
 #composer { padding: 10px; border-top: 2px solid var(--line); background: var(--panel2); }

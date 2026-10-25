@@ -115,6 +115,60 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     assert(await page.evaluate(() => document.getElementById('hireDlg').open), 'clicking an empty desk opens the hire dialog');
     await page.keyboard.press('Escape');
     await page.evaluate(() => { const d = document.getElementById('hireDlg'); if (d.open) d.close(); });
+
+    // ---- helpers (subagents): standing spots, depth order, hit testing ----
+    const hs = await page.evaluate(() => {
+      const O = window.Office, out = { counts: [], bad: [], faces: true, order: {}, hit: null };
+      for (const s of O.SLOTS) {
+        const sp = O.helperSpots(s.i); out.counts.push(sp.length);
+        for (const q of sp) { if (O.isBlocked(Math.floor(q.x), Math.floor(q.y))) out.bad.push([s.i, q.x, q.y]); if (![0, 1, 2, 3].includes(q.face)) out.faces = false; }
+      }
+      const all = Array.from({ length: 8 }, (_, i) => ({ id: 'a' + i, slot: i, away: false, x: 0, y: 0, helpers: [] }));
+      const sp0 = O.helperSpots(1);                                   // slot 1: behind the chair first, desk far end third
+      const mkH = (id, q) => ({ subId: id, label: id, kind: 'Explore', state: 'working', x: q.x, y: q.y, face: q.face, age: 5, endAge: -1, phase: 0, look: { skin: '#f1c7a0', hair: '#222', hairStyle: 'short', pants: '#333', shirt: '#fff' } });
+      all[1].helpers = [mkH('hb', sp0[0]), mkH('hf', sp0[2])];
+      const ord = O.drawOrder(all), at = (t) => ord.indexOf(t);
+      out.order = { behindChair: at('helper:hb') < at('chair1') && at('helper:hb') < at('person:a1'), frontOfDesk: at('helper:hf') > at('desk1'), spots: [sp0[0], sp0[2]] };
+      const [hx, hy] = O.project(sp0[0].x, sp0[0].y, 14); out.hit = O.hitTest(hx, hy, all);
+      return out;
+    });
+    assert(hs.counts.every((n) => n >= 3) && hs.bad.length === 0 && hs.faces, `every desk has >=3 free helper spots on walkable tiles (${hs.counts.join(',')})`);
+    assert(hs.order.behindChair && hs.order.frontOfDesk, 'helper behind the chair is painted before chair+parent; helper at the desk end is painted after the desk');
+    assert(hs.hit && hs.hit.id === 'a1', 'clicking a helper selects its parent agent');
+
+    // ---- live team task: helpers appear, chat shows collapsed sub lines, flights, cleanup ----
+    const adaId = await page.evaluate(() => [...window.harness.agents.values()].find((a) => a.name === 'Ada').id);
+    await page.evaluate((id) => window.harness.select(id), adaId);
+    assert(await page.evaluate(() => !document.getElementById('teamBtn').hidden && !document.getElementById('relayTo').hidden), 'chat shows the Team task button (mock) and the send-to-agent select');
+    await page.fill('#input', 'tidy up'); await page.click('#teamBtn');
+    await page.waitForFunction(() => window.harness.states().find((a) => a.name === 'Ada').helpers === 3, null, { timeout: 15000 });
+    const live = await page.evaluate(() => {
+      const hl = window.harness.helpers([...window.harness.agents.values()].find((a) => a.name === 'Ada').id);
+      const spots = new Set(hl.map((h) => Math.floor(h.x) + ',' + Math.floor(h.y)));
+      return { n: hl.length, distinct: spots.size, flights: window.harness.flights().map((f) => f.kind), subLines: document.querySelectorAll('#transcript details.msg.sub').length, open: document.querySelectorAll('#transcript details.msg.sub[open]').length, user: [...document.querySelectorAll('#transcript .msg.user')].at(-1).textContent };
+    });
+    assert(live.n === 3 && live.distinct === 3, 'team task: 3 helpers each on their own tile');
+    assert(live.subLines === 3 && live.open === 0 && /\/team tidy up/.test(live.user), 'chat: 3 collapsed "↳ helper" lines under the /team message');
+    await page.click('#transcript details.msg.sub summary'); await sleep(200);
+    assert(await page.evaluate(() => document.querySelectorAll('#transcript details.msg.sub[open]').length === 1 && /▸ \w+/.test(document.querySelector('#transcript details.msg.sub[open] .subLog').textContent) || document.querySelector('#transcript details.msg.sub[open] .subLog').textContent.includes('no activity')), 'expanding a helper line shows its activity log');
+    assert(/helper '[^']+' (started|finished)/.test(await page.evaluate(() => document.querySelector('#transcript details.msg.sub summary').textContent)), 'sub line reads "↳ helper \'label\' started/finished"');
+    let sawBack = false, sawWait = false;
+    for (let i = 0; i < 120 && !sawBack; i++) { const f = await page.evaluate(() => window.harness.flights().map((x) => x.kind)); sawBack = f.includes('back'); await sleep(100); }
+    assert(sawBack, 'result handoff flight (helper -> parent) happens when a helper finishes');
+    await page.waitForFunction(() => window.harness.states().find((a) => a.name === 'Ada').state === 'done', null, { timeout: 25000 });
+    await page.waitForFunction((id) => window.harness.helpers(id).length === 0 && window.harness.flights().length === 0, adaId, { timeout: 8000 });
+    assert(true, 'helpers fade away and flights are cleaned up after the run');
+    assert(await page.evaluate(() => document.querySelectorAll('#transcript details.msg.sub.finished').length === 3), 'sub lines end as "finished" in the transcript');
+
+    // ---- agent-to-agent message: letter flight + forwarded input ----
+    await page.selectOption('#relayTo', { label: '→ Linus' });
+    await page.fill('#input', 'please look at my diff'); await page.press('#input', 'Enter');
+    let sawLetter = false;
+    for (let i = 0; i < 20 && !sawLetter; i++) { sawLetter = (await page.evaluate(() => window.harness.flights().map((f) => f.kind))).includes('letter'); await sleep(50); }
+    assert(sawLetter, 'sending to another agent flies a letter between the two characters');
+    await page.waitForFunction(() => [...window.harness.agents.values()].find((a) => a.name === 'Linus').transcript.some((m) => m.role === 'user' && m.text === '[from Ada] please look at my diff'), null, { timeout: 5000 });
+    assert(true, 'target agent receives "[from Ada] …" as input');
+    assert(await page.evaluate(() => document.getElementById('relayTo').value === ''), 'send-to select resets to "this agent" after sending');
     // integer pixel scale
     const sc = await page.evaluate(() => { const c = document.getElementById('office'); return [c.width / window.Office.W, c.height / window.Office.H]; });
     assert(Number.isInteger(sc[0]) && sc[0] === sc[1], `canvas is scaled by an integer factor (x${sc[0]})`);

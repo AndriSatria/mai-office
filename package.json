@@ -10,7 +10,8 @@
     "screenshots": "node scripts/screenshots.js",
     "test:adapters": "node scripts/test-adapters.js",
     "test:iso": "node scripts/test-iso.js",
-    "screenshots:hd": "node scripts/screenshots-hd.js"
+    "screenshots:hd": "node scripts/screenshots-hd.js",
+    "demo:video": "node scripts/demo-video.js"
   },
   "engines": {
     "node": ">=18"

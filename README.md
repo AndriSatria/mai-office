@@ -37,6 +37,40 @@ drawers, chair), plants, and a coffee corner (counter, machine, kettle, mugs, ru
   scaled canvas, anchored to projected points.
 * **Flat view:** `http://localhost:3000/?view=flat` still gives the original top-down renderer (`office-flat.js`).
 
+## Teams, helpers & agent-to-agent messages
+
+When an agent runs work in parallel (Claude `Task` subagents, Cursor helper tasks, or the mock's simulated team) every helper shows up in the
+office as a **junior** and the parent is visibly "waiting on N helpers".
+
+![team](screenshots/15-team-3-parallel-helpers.png)
+![handoff](screenshots/16-team-result-handoff.png)
+
+* **Visuals:** a junior pops in at a free spot next to the parent's desk (shorter, white shirt, kind-coloured vest, lanyard + a small
+  badge with the helper label, tablet while working, tool chip). The parent turns toward them and a **paper flies parent → helper**;
+  dotted isometric lines connect parent and helpers. When a helper ends, an **envelope with a speech-bubble icon flies back** to the
+  parent (failed helpers show `!`), the junior cheers (or looks worried), holds for a moment and fades out. Spots that are blocked or
+  taken are skipped; if there is no free spot the helper is queued and placed when one frees up.
+* **Chat panel:** each helper is one collapsed line (`↳ helper 'label' started / finished / failed · kind · N steps`); expand it for the
+  helper's tool log and result.
+* **Events** (normalized adapter events): `subagent_start {subId,label,kind}`, `subagent_activity {subId,tool,summary}`,
+  `subagent_end {subId,ok}`. Concurrent helpers are tracked by `subId`. Helpers never drive the parent's own state or tool chip; a run
+  result/error/interrupt closes any helper still open; helpers that were running when the server restarted are marked `lost`.
+* **Claude mapping:** a `Task` (or `Agent`) `tool_use` starts a helper (its `id` is the `subId`); events carrying `parent_tool_use_id`
+  are helper activity; the matching `tool_result` ends it (`is_error` = failed). **Cursor** is best effort: a tool call named like
+  `task` / `subagent` / `agent` is treated as a helper. **Mock:** type `/team <task>` (3 helpers) or a message containing "in parallel" /
+  "subagents" (2-3 helpers; "fail" in the text makes the last one fail), or click **👥 Team task** next to the composer.
+* **Send to another agent:** pick a colleague in the select next to **Send** and the message is delivered to them as `[from <name>] …`
+  with a flying letter; the sender's chat keeps a "✉ Sent to X" line.
+* The flat view (`?view=flat`) ignores helpers. WebSocket additions: client→server `relay {from,to,text}`; server→client
+  `subagent {op,id,sub}`, `sub_update`, `relay {from,to}`.
+
+**Demo video:** `demo/mai-office-demo.mp4` (~37 s, 1920×1080) shows empty office → hiring 4 agents → idle stretch/read/coffee chat →
+a message to Ada (typing, thinking, working with tool chip) → 3 parallel helpers with handoffs and dotted lines → results return, check mark
+and reply bubble. Re-record with `npm run demo:video` (mock mode, Playwright `recordVideo` + ffmpeg to H.264/yuv420p; `DEMO_SLOW=1.5` slows the pauses).
+
+**Not verified against real CLIs:** the Claude `Task` / `parent_tool_use_id` handling follows the documented stream-json shape and is only
+tested with `scripts/fake-claude.js`; the Cursor helper shape is a guess; `/team`, relay and the visuals were exercised with the mock and fake CLIs only.
+
 ## Run
 
 ```bash
@@ -172,10 +206,11 @@ scripts/screenshots.js    Playwright demo: hires, chats, screenshots → screens
 scripts/fake-claude.js    fake `claude` binary for adapter testing
 scripts/fake-cursor-agent.js  fake `cursor-agent` binary
 scripts/test-iso.js       Playwright geometry tests: iso hit testing, paths, depth order, mouse (`npm run test:iso`)
+scripts/demo-video.js     records demo/mai-office-demo.mp4 (`npm run demo:video`)
 scripts/test-adapters.js  end-to-end test of all agent types + type persistence (`npm run test:adapters`)
 ```
 
-WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`;
+WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`, `relay {from,to,text}`;
 server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `error`.
 
 ## Regenerate screenshots
@@ -187,10 +222,10 @@ npm run screenshots     # uses the fake claude/cursor CLIs so all agent types ap
 
 Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, wandering, coffee break, fire),
 `10-idle-stretch-read-look`, `11`/`11b-idle-chat-at-coffee`, `12-hire-dialog-agent-type`, `13-flat-view-fallback` (`?view=flat`),
-`14-hover-empty-desk`. (`07-wandering` is the walking agent.)
+`14-hover-empty-desk`, `15-team-3-parallel-helpers`, `16-team-result-handoff`, `17-agent-to-agent-letter`. (`07-wandering` is the walking agent.)
 
 **HD shots:** `npm run screenshots:hd` renders a 1920×1080 viewport at deviceScaleFactor 2 and saves 3840×2160 PNGs to `screenshots/hd/`
-(idle variety, working + tool chip, thinking + done bubble, coffee chat). The canvas backing store is in device pixels with an integer
+(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`/`06` team with 3 parallel helpers + result handoff). The canvas backing store is in device pixels with an integer
 scale (×7 at DPR 2), so nothing is resampled; the script asserts this before capturing. Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
 
 ## Known limitations / ideas
@@ -198,5 +233,5 @@ scale (×7 at DPR 2), so nothing is resampled; the script asserts this before ca
 * Max 8 agents (desk slots); fixed office layout; the isometric camera is fixed (no rotation/zoom); bubbles of different agents can overlap.
 * Claude and Cursor modes are untested with the real CLIs; no tool-permission prompts in headless mode; one process per message.
 * No auth; no markdown rendering in chat; long transcripts are capped at 300 messages per agent.
-* Next: agent-to-agent messaging, `/clear`/new-session button, per-agent model & permission settings,
+* Next: `/clear`/new-session button, per-agent model & permission settings,
   markdown/diff rendering, sound, day/night cycle, a meeting room for multi-agent tasks.

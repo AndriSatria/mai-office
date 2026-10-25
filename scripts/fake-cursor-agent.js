@@ -13,6 +13,16 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   out({ type: 'system', subtype: 'init', apiKeySource: 'login', cwd: process.cwd(), model: 'Fake Model', permissionMode: 'default' });
   out({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: prompt }] } });
   await wait(700);
+  if (/parallel|team/i.test(prompt)) { // best-effort guess of how Cursor reports task/subagent tool calls
+    out({ type: 'tool_call', subtype: 'started', call_id: 't1', tool_call: { taskToolCall: { args: { description: 'explore repo', subagentType: 'explore' } } } });
+    out({ type: 'tool_call', subtype: 'started', call_id: 't2', tool_call: { taskToolCall: { args: { description: 'run tests', subagentType: 'shell' } } } });
+    await wait(900);
+    out({ type: 'tool_call', subtype: 'completed', call_id: 't1', tool_call: { taskToolCall: { args: { description: 'explore repo' }, result: { success: 'ok' } } } });
+    await wait(500);
+    out({ type: 'tool_call', subtype: 'completed', call_id: 't2', tool_call: { taskToolCall: { args: { description: 'run tests' }, result: { success: 'ok' } } } });
+    out({ type: 'result', subtype: 'success', is_error: false, result: '(fake cursor team) done', session_id: sid });
+    return;
+  }
   const intro = 'Looking at the code first.';
   if (partial) { for (const w of intro.split(/(\s+)/)) { out({ type: 'assistant', timestamp_ms: Date.now(), message: { role: 'assistant', content: [{ type: 'text', text: w }] } }); await wait(20); }
     out({ type: 'assistant', timestamp_ms: Date.now(), model_call_id: 'm1', message: { role: 'assistant', content: [{ type: 'text', text: intro }] } }); }

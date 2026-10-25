@@ -44,6 +44,7 @@ wss.on('connection', (ws) => {
         case 'fire': harness.fire(m.id); break;
         case 'send': harness.send(m.id, m.text); break;
         case 'interrupt': harness.interrupt(m.id); break;
+        case 'relay': harness.relay(m.from, m.to, m.text); break;
         default: break;
       }
     } catch (e) {

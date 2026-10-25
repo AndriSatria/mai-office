@@ -39,6 +39,8 @@
           <textarea id="input" rows="2" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
           <div class="row">
             <span id="queueInfo" class="dim"></span>
+            <button type="button" id="teamBtn" class="btn small" title="Mock agents only: spawn 2-3 parallel helpers (same as /team <task>)" hidden>👥 Team task</button>
+            <select id="relayTo" class="relay" title="Send to another agent: the text is forwarded as input prefixed [from <name>]"><option value="">this agent</option></select>
             <button type="button" id="stopBtn" class="btn red small" hidden>■ Stop</button>
             <button type="submit" class="btn green small">Send ⏎</button>
           </div>

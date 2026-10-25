@@ -439,7 +439,7 @@
   }
   const FLIP = [false, true, true, false];     // facings 1 (SW) and 2 (NW) are mirrored sprites
   const LOOK_SEQ = [0, 1, 1, 0, 3, 3];         // swivel sequence while "looking around" at the desk
-  const seatFace = (e) => (e.act === 'look' ? LOOK_SEQ[Math.floor((e.actP || 0) / 0.9) % 6] : 0);
+  const seatFace = (e) => (e.faceOv != null ? e.faceOv : e.act === 'look' ? LOOK_SEQ[Math.floor((e.actP || 0) / 0.9) % 6] : 0);
   const faceOf = (e) => (e.away ? (e.face || 0) : seatFace(e));
 
   function renderPerson(c, e, t, seated) {
@@ -457,6 +457,110 @@
     if (ret.mug) { const mx = ax + (FLIP[face] ? -ret.mug[0] : ret.mug[0]), s2 = Math.floor(t * 4) % 2; c.globalAlpha = 0.8; R(c, mx - 1 + s2, ay + ret.mug[1] - 3, 1, 2, '#fff'); R(c, mx + 1 - s2, ay + ret.mug[1] - 6, 1, 2, '#fff'); c.globalAlpha = 1; }
   }
 
+
+  // ---------- helpers (subagents): small "junior" people, handoff icons, dotted links ----------
+  const KIND_COL = ['#5ff2a5', '#6cb6ff', '#f5c542', '#ff8fa3', '#c49bff', '#ffa657'];
+  const KIND_FIXED = { explore: 1, bash: 2, shell: 2, 'code-reviewer': 4, reviewer: 4, docs: 0, 'general-purpose': 5, general: 5 };
+  const LANYARD = ['#ff4d6d', '#ffd23f', '#3ddc97', '#4d9de0', '#ee7bff', '#ff8c42'];
+  function kindIdx(kind) {
+    const k = String(kind || '').toLowerCase();
+    if (KIND_FIXED[k] !== undefined) return KIND_FIXED[k];
+    let h = 0; for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0;
+    return h % KIND_COL.length;
+  }
+  const kindCol = (kind) => KIND_COL[kindIdx(kind)];
+  const faceToward = (fx, fy, tx, ty) => { const dx = tx - fx, dy = ty - fy; return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3); };
+
+  /** Standing spots for a parent's helpers, best first: behind the chair (their face is visible), then beside the desk's far end, then the other sides.
+   *  Only tiles that are not furniture; the caller skips spots other helpers already use. */
+  function helperSpots(slot) {
+    const s = SLOTS[slot], out = [], seen = new Set();
+    const cand = [[-1.5, 1.5], [-1.5, 2.5], [1.5, 1.5], [1.5, 0.5], [-1.5, 0.5], [1.5, 2.5], [0.5, 2.5], [-0.5, 2.5], [2.5, 1.5], [2.5, 0.5], [2.5, 2.5], [-2.5, 1.5], [-2.5, 2.5], [-2.5, 0.5]];
+    for (const [ox, oy] of cand) {
+      const x = s.dx + ox, y = s.dy + oy, tx = Math.floor(x), ty = Math.floor(y), k = tx * 100 + ty;
+      if (isBlocked(tx, ty) || seen.has(k)) continue;
+      seen.add(k); out.push({ x, y, face: faceToward(x, y, s.seat.x, s.seat.y) });
+    }
+    return out;
+  }
+
+  /** small colourful person: white shirt + kind-coloured vest, lanyard with ID badge, ~6px shorter than the adults */
+  function drawJunior(c, h, t, face) {
+    const look = h.look, front = face < 2, kc = kindCol(h.kind), lc2 = LANYARD[(kindIdx(h.kind) + 2) % LANYARD.length];
+    const ok = h.state === 'ok', bad = h.state === 'failed';
+    const f = Math.floor(t * 8 + h.phase * 5);
+    const bob = ok ? -Math.floor(Math.abs(Math.sin(t * 7)) * 2) : (h.state === 'working' && f % 3 === 0 ? 1 : 0);
+    const mood = bad ? 'worried' : ok ? 'happy' : 'normal';
+    const blink = ((t * 1000 + h.phase * 3600) % 3600) < 140;
+    R(c, -3, -7, 3, 5, look.pants); R(c, 1, -7, 3, 5, look.pants); R(c, -4, -2, 4, 2, shoes); R(c, 0, -2, 4, 2, shoes);
+    const top = -15 + bob, th = 8 - bob;
+    torso(c, { shirt: '#eef1f8', skin: look.skin }, top, th, front, look.pants);
+    R(c, -4, top + 4, 8, th - 5, kc); R(c, -4, top + 4, 8, 1, shade(kc, 30)); R(c, 2, top + 4, 2, th - 5, shade(kc, -25));
+    if (front) { R(c, -2, top, 1, 3, lc2); R(c, 2, top, 1, 3, lc2); R(c, -1, top + 3, 3, 1, lc2); R(c, -1, top + 4, 3, 3, '#fff'); R(c, -1, top + 4, 3, 1, lc2); R(c, 0, top + 5, 1, 1, '#555'); }
+    else R(c, -3, top, 7, 1, lc2);
+    head(c, look, -25 + bob, front, { blink, mood });
+    const sh = top + 2; let N = [-5, -7], Fh = [5, -7];
+    if (ok) { N = [-9, -31 - bob]; Fh = [9, -31 - bob]; }
+    else if (bad) { const j = Math.floor(t * 8) % 2; N = [-6, -9 - j]; Fh = [6, -9 + j]; }
+    else if (h.state === 'working' && front) { // holding a little tablet with a live screen
+      R(c, -5, top + 6, 10, 7, '#161827'); R(c, -4, top + 7, 8, 5, '#0e2a3a');
+      for (let i = 0; i < 3; i++) R(c, -3, top + 8 + i * 2 - (i === 2 ? 1 : 0), 2 + ((f + i * 2) % 4), 1, i === 1 ? '#5ff2a5' : '#6cb6ff');
+      N = [-5, top + 11]; Fh = [5, top + 11];
+    } else if (h.state === 'working') { N = [-4, -10 + (f % 2)]; Fh = [4, -10 + ((f + 1) % 2)]; }
+    limb(c, 4, sh, Fh[0], Fh[1], { shirt: '#c9cfe0', skin: look.skin }, 1, true);
+    limb(c, -4, sh, N[0], N[1], { shirt: '#c9cfe0', skin: look.skin }, -1, false);
+  }
+
+  function renderJunior(c, h, t) {
+    const face = h.face || 0, ax = sx(h.x, h.y), ay = sy(h.x, h.y, 0);
+    for (let dy = -2; dy <= 2; dy++) { const w = Math.round(7 * Math.sqrt(1 - (dy * dy) / 6.25)); R(c, ax - w, ay + dy, w * 2, 1, 'rgba(40,30,15,.28)'); }
+    sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, 80, 80); sc.setTransform(1, 0, 0, 1, ORX, ORY);
+    drawJunior(sc, h, t, face);
+    sc.setTransform(1, 0, 0, 1, 0, 0);
+    blit(c, ax, ay, FLIP[face]);
+  }
+  const HOLD = { ok: 1.4, failed: 2.6, fade: 0.7 };   // seconds a finished helper stays (cheering / '!') before fading out
+  const helperAlpha = (h) => {
+    let a = 1;
+    if (h.age < 0.5) a = Math.min(a, 0.25 * (1 + Math.floor(h.age / 0.125)));
+    const hold = h.state === 'failed' ? HOLD.failed : HOLD.ok;
+    if (h.endAge >= hold) a = Math.min(a, Math.max(0, Math.ceil((1 - (h.endAge - hold) / HOLD.fade) * 4) / 4));
+    return a;
+  };
+  const helperAnchor = (h) => { const ax = sx(h.x, h.y), ay = sy(h.x, h.y, 0); return { ax, ay, head: ay - 26 }; };
+
+  // pixel icons for the handoffs
+  function paperIcon(c, x, y, f) {
+    x = Math.round(x); y = Math.round(y); const w = f % 2 ? 2 : 3;
+    R(c, x - w - 1, y - 4, w * 2 + 2, 8, '#161827'); R(c, x - w, y - 3, w * 2, 6, '#fffbe8');
+    R(c, x - w + 1, y - 2, Math.max(1, w * 2 - 2), 1, '#9a8f6a'); R(c, x - w + 1, y, Math.max(1, w * 2 - 2), 1, '#9a8f6a');
+  }
+  function envelopeIcon(c, x, y, seal) {
+    x = Math.round(x); y = Math.round(y);
+    R(c, x - 6, y - 4, 12, 9, '#161827'); R(c, x - 5, y - 3, 10, 7, '#fffbe8');
+    for (let i = 0; i < 4; i++) { R(c, x - 5 + i, y - 3 + i, 1, 1, '#b0a77c'); R(c, x + 4 - i, y - 3 + i, 1, 1, '#b0a77c'); }
+    R(c, x - 1, y, 2, 2, seal);
+  }
+  function msgBubble(c, cx, cy, glyph) { // small speech bubble with an envelope ('env') or '!' ('err')
+    cx = Math.round(cx); cy = Math.round(cy);
+    R(c, cx - 8, cy - 6, 16, 12, '#161827'); R(c, cx - 7, cy - 7, 14, 14, '#161827'); R(c, cx - 7, cy - 6, 14, 12, '#fff'); R(c, cx - 6, cy - 7, 12, 14, '#fff');
+    R(c, cx - 4, cy + 6, 4, 3, '#161827'); R(c, cx - 3, cy + 6, 2, 2, '#fff');
+    if (glyph === 'err') { R(c, cx - 1, cy - 4, 2, 5, '#e5484d'); R(c, cx - 1, cy + 3, 2, 2, '#e5484d'); }
+    else { R(c, cx - 5, cy - 3, 10, 7, '#3a3f52'); R(c, cx - 4, cy - 2, 8, 5, '#fffbe8'); for (let i = 0; i < 4; i++) { R(c, cx - 4 + i, cy - 2 + i, 1, 1, '#9a8f6a'); R(c, cx + 3 - i, cy - 2 + i, 1, 1, '#9a8f6a'); } R(c, cx - 1, cy, 2, 2, '#30a46c'); }
+  }
+  /** dotted line along a Bresenham path; dots march forward with `ph` */
+  function dotLine(c, x0, y0, x1, y1, col, ph) {
+    const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), stx = x0 < x1 ? 1 : -1, sty = y0 < y1 ? 1 : -1;
+    let err = dx + dy, i = 0; c.fillStyle = col;
+    for (;;) {
+      if ((((i++ - ph) % 4) + 4) % 4 === 0) c.fillRect(x0, y0, 1, 1);
+      if (x0 === x1 && y0 === y1) break;
+      const e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += stx; }
+      if (e2 <= dx) { err += dx; y0 += sty; }
+    }
+  }
+
   // ---------- scene: objects, depth sorting ----------
   function buildObjects(entries, t) {
     const bySlot = {}; entries.forEach((e) => { bySlot[e.slot] = e; });
@@ -464,9 +568,9 @@
     for (const s of SLOTS) {
       const ag = bySlot[s.i] || null, res = ag ? { id: ag.id } : { slot: s.i };
       const cx0 = s.dx - 0.95, cy0 = s.dy + 0.55, cx1 = s.dx - 0.05, cy1 = s.dy + 1.45;
-      objs.push({ x0: cx0, y0: cy0, x1: cx1, y1: cy1, h: 24, pad: 0, ord: 0, draw: (c) => drawChair(c, s), hit: (lx, ly) => inPoly(boxHex(cx0, cy0, cx1, cy1, 0, 23), lx, ly), res });
+      objs.push({ x0: cx0, y0: cy0, x1: cx1, y1: cy1, h: 24, pad: 0, ord: 0, tag: 'chair' + s.i, draw: (c) => drawChair(c, s), hit: (lx, ly) => inPoly(boxHex(cx0, cy0, cx1, cy1, 0, 23), lx, ly), res });
       const mon = [sx(s.dx + 0.125, s.dy + 1.625), sy(s.dx + 0.125, s.dy + 1.625, 28), 12];
-      objs.push({ x0: s.dx, y0: s.dy, x1: s.dx + 1, y1: s.dy + 2, h: 29, pad: 0, ord: 2, draw: (c) => drawDesk(c, s, ag, t),
+      objs.push({ x0: s.dx, y0: s.dy, x1: s.dx + 1, y1: s.dy + 2, h: 29, pad: 0, ord: 2, tag: 'desk' + s.i, draw: (c) => drawDesk(c, s, ag, t),
         hit: (lx, ly) => inPoly(boxHex(s.dx, s.dy, s.dx + 1, s.dy + 2, 0, DESKZ), lx, ly) || (lx >= mon[0] && lx < mon[0] + mon[2] && ly >= mon[1] && ly < mon[1] + 15), res });
     }
     for (const p of PLANTS) objs.push({ x0: p.x + 0.2, y0: p.y + 0.2, x1: p.x + 0.8, y1: p.y + 0.8, h: 34, pad: 8, ord: 0, draw: (c) => plant(c, p.x, p.y), hit: null });
@@ -474,8 +578,14 @@
       let x, y; const seated = !e.away;
       if (seated) { const s = SLOTS[e.slot]; x = s.seat.x; y = s.seat.y; } else { x = e.x; y = e.y; }
       const ax = sx(x, y), ay = sy(x, y, seated ? SEAT : 0), top = seated ? 26 : 34;
-      objs.push({ x0: x - 0.22, y0: y - 0.22, x1: x + 0.22, y1: y + 0.22, h: top, pad: 10, ord: 1, draw: (c) => renderPerson(c, e, t, seated),
+      objs.push({ x0: x - 0.22, y0: y - 0.22, x1: x + 0.22, y1: y + 0.22, h: top, pad: 10, ord: 1, tag: 'person:' + e.id, draw: (c) => renderPerson(c, e, t, seated),
         hit: (lx, ly) => lx >= ax - 8 && lx <= ax + 8 && ly >= ay - top + (seated ? 1 : 0) && ly <= ay + 3, res: { id: e.id }, person: true });
+    }
+    for (const e of entries) for (const h of e.helpers || []) {
+      const ax = sx(h.x, h.y), ay = sy(h.x, h.y, 0), al = helperAlpha(h);
+      if (al <= 0) continue;
+      objs.push({ x0: h.x - 0.2, y0: h.y - 0.2, x1: h.x + 0.2, y1: h.y + 0.2, h: 28, pad: 9, ord: 1, tag: 'helper:' + h.subId, draw: (c) => { c.globalAlpha = al; renderJunior(c, h, t); c.globalAlpha = 1; },
+        hit: (lx, ly) => lx >= ax - 7 && lx <= ax + 7 && ly >= ay - 27 && ly <= ay + 3, res: { id: e.id }, helper: true });
     }
     return objs;
   }
@@ -546,6 +656,21 @@
       else if (e.id === scene.hoverId) { podRing(lc, s, 'rgba(255,255,255,.8)', 0, 1); if (e.away) { const p = personAnchor(e); ellipseRing(lc, p.ax, p.ay, 13, 6, 'rgba(255,255,255,.8)', 0, 1); } }
     }
     if (scene.hoverSlot != null && !bySlot[scene.hoverSlot]) podRing(lc, SLOTS[scene.hoverSlot], 'rgba(95,242,165,.9)', 0, 1);
+    // dotted isometric links parent -> helpers (L-shaped along the floor axes) and a glowing tile under each helper
+    for (const e of entries) {
+      if (!e.helpers || !e.helpers.length) continue;
+      const s = SLOTS[e.slot], ph = Math.floor(t * 8);
+      for (const h of e.helpers) {
+        if (h.age < 0.25 || h.endAge > 0.9) continue;
+        const kc = kindCol(h.kind), fade = h.endAge > 0.35 ? 0.45 : 1, tx = Math.floor(h.x), ty = Math.floor(h.y);
+        lc.globalAlpha = (0.16 + 0.08 * Math.sin(t * 5 + h.phase * 6)) * fade;
+        poly(lc, [A(tx + 0.1, ty + 0.1, 0), A(tx + 0.9, ty + 0.1, 0), A(tx + 0.9, ty + 0.9, 0), A(tx + 0.1, ty + 0.9, 0)], kc);
+        lc.globalAlpha = fade;
+        const P0 = A(s.seat.x, s.seat.y, 0), P1 = A(h.x, s.seat.y, 0), P2 = A(h.x, h.y, 0);
+        dotLine(lc, P0[0], P0[1], P1[0], P1[1], kc, ph); dotLine(lc, P1[0], P1[1], P2[0], P2[1], kc, ph + 2);
+        lc.globalAlpha = 1;
+      }
+    }
     // steam over the coffee machine
     for (let i = 0; i < 3; i++) {
       const p = (t * 8 + i * 4) % 12, bx = sx(9.4, 0.5), by = sy(9.4, 0.5, 32);
@@ -558,6 +683,52 @@
       const p = personAnchor(e);
       if (!e.away) stateIcon(lc, p.ax, p.head, e.state, t);
       else { stateIcon(lc, p.ax, p.head + 2, e.state, t); if (e.mode === 'chat' && e.talk != null) drawTalk(lc, p.ax + e.talkDir * 6, p.head - 2, e.talk, e.talkDir); }
+    }
+
+    // helpers: status icons, pop-in / fade sparks, flying papers and envelopes, "result arrived" bubbles
+    const byId = {}; entries.forEach((e) => { byId[e.id] = e; });
+    const chest = (e) => { const p = personAnchor(e); return [p.ax, p.ay - (e.away ? 18 : 13)]; };
+    for (const e of entries) for (const h of e.helpers || []) {
+      const al = helperAlpha(h); if (al <= 0) continue;
+      const a = helperAnchor(h), kc = kindCol(h.kind);
+      lc.globalAlpha = al;
+      if (h.state === 'ok' && h.endAge < HOLD.ok) stateIcon(lc, a.ax, a.head, 'done', t);
+      else if (h.state === 'failed') stateIcon(lc, a.ax, a.head, 'error', t);
+      lc.globalAlpha = 1;
+      const sp = h.age < 0.7 ? h.age / 0.7 : (h.endAge >= (h.state === 'failed' ? HOLD.failed : HOLD.ok) ? (h.endAge - (h.state === 'failed' ? HOLD.failed : HOLD.ok)) / HOLD.fade : -1);
+      if (sp >= 0 && sp <= 1) {
+        const up = h.age >= 0.7;
+        for (let i = 0; i < 7; i++) {
+          const ang = (i / 7) * Math.PI * 2 + h.phase * 3, r = (up ? 4 + sp * 6 : sp * 15), px = a.ax + Math.cos(ang) * r, py = a.ay - 6 + Math.sin(ang) * r * 0.5 - (up ? sp * 20 : sp * 8);
+          lc.globalAlpha = 1 - sp; R(lc, Math.round(px), Math.round(py), 1, 1, i % 2 ? '#fff' : kc); if (i % 3 === 0) { R(lc, Math.round(px) - 1, Math.round(py), 3, 1, kc); R(lc, Math.round(px), Math.round(py) - 1, 1, 3, kc); }
+        }
+        lc.globalAlpha = 1;
+      }
+    }
+    for (const f of scene.flights || []) {
+      if (f.p < 0 || f.p > 1) continue;
+      const pe = byId[f.pid]; if (!pe) continue;
+      let from, to, kc = '#6cb6ff', draw;
+      if (f.kind === 'letter') {
+        const te = byId[f.toId]; if (!te) continue;
+        from = chest(pe); to = chest(te); draw = (x, y) => envelopeIcon(lc, x, y, '#6cb6ff');
+      } else {
+        const h = (pe.helpers || []).find((x) => x.subId === f.subId); if (!h) continue;
+        const hp = helperAnchor(h), hc = [hp.ax, hp.ay - 13]; kc = kindCol(h.kind);
+        if (f.kind === 'out') { from = chest(pe); to = hc; draw = (x, y) => paperIcon(lc, x, y, Math.floor(t * 10)); }
+        else { from = hc; to = chest(pe); draw = (x, y) => envelopeIcon(lc, x, y, f.ok === false ? '#e5484d' : '#30a46c'); }
+      }
+      const ez = f.p < 0.5 ? 2 * f.p * f.p : 1 - Math.pow(-2 * f.p + 2, 2) / 2, arc = f.kind === 'letter' ? 24 : 16;
+      const pos = (q) => { const z = q < 0.5 ? 2 * q * q : 1 - Math.pow(-2 * q + 2, 2) / 2; return [from[0] + (to[0] - from[0]) * z, from[1] + (to[1] - from[1]) * z - Math.sin(Math.PI * Math.min(1, Math.max(0, q))) * arc]; };
+      for (let k = 3; k >= 1; k--) { const q = f.p - k * 0.05; if (q < 0) continue; const tp = pos(q); lc.globalAlpha = 0.7 / k; R(lc, Math.round(tp[0]), Math.round(tp[1]), 2, 2, kc); }
+      lc.globalAlpha = 1;
+      const pp = pos(f.p); draw(pp[0], pp[1]);
+    }
+    for (const e of entries) if (e.rcv && e.rcv.age >= 0 && e.rcv.age < 2.4) {
+      const p = personAnchor(e), bob = Math.floor(Math.sin(e.rcv.age * 8) * 1.2), pop = e.rcv.age < 0.15 ? 0.5 : 1;
+      lc.globalAlpha = e.rcv.age > 2.0 ? Math.max(0, 1 - (e.rcv.age - 2.0) / 0.4) : pop;
+      msgBubble(lc, p.ax + 15, p.head - 5 + bob, e.rcv.ok === false ? 'err' : 'env');
+      lc.globalAlpha = 1;
     }
 
     const ctx = canvas.getContext('2d');
@@ -577,7 +748,15 @@
       ctx.fillStyle = dotCol; ctx.fillRect(Math.round(left + 5 * U), Math.round(labY - 3 * U), Math.round(5 * U), Math.round(5 * U));
       if (tb) pillText(ctx, tb.text, left + nw + gap + bw / 2, labY, U * 0.8, tb.fg, tb.bg, true);
       // tool chip floats just above the head (over the monitor it would cover the face)
-      if (!e.away && e.state === 'working') pillText(ctx, e.tool || 'typing…', p.ax * S, (p.head - 5) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
+      if (!e.away && e.waiting > 0) pillText(ctx, 'waiting on ' + e.waiting + ' helper' + (e.waiting > 1 ? 's' : '') + '.'.repeat(1 + Math.floor(t * 2) % 3), p.ax * S, (p.head - 5) * S, U * 0.9, '#2a1f00', '#f5c542', true);
+      else if (!e.away && e.state === 'working') pillText(ctx, e.tool || 'typing…', p.ax * S, (p.head - 5) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
+      for (const h of e.helpers || []) {
+        const al = helperAlpha(h); if (al <= 0) continue;
+        const a = helperAnchor(h); ctx.globalAlpha = al;
+        pillText(ctx, h.label, a.ax * S, (a.ay + 9) * S, U * 0.72, '#14151f', kindCol(h.kind), true);
+        if (h.state === 'working' && h.age > 0.5) pillText(ctx, h.tool || 'starting…', a.ax * S, (a.head - 5) * S, U * 0.72, '#14151f', '#dbe4ff', true);
+        ctx.globalAlpha = 1;
+      }
       if (e.queued) pillText(ctx, '+' + e.queued + ' queued', labX * S, (lp[1] + 11) * S, U * 0.85, '#14151f', '#f5c542', true);
       if (e.bubble) drawBubble(ctx, e.bubble, p.ax * S, (p.head - 18) * S, S, U, canvas.width);
     }
@@ -596,5 +775,7 @@
     drawAvatar: F.drawAvatar, GX, GY, isBlocked, project: (x, y, z) => [sx(x, y), sy(x, y, z || 0)],
     deskPoint: (slot) => { const s = SLOTS[slot]; return [sx(s.dx + 0.5, s.dy + 1), sy(s.dx + 0.5, s.dy + 1, DESKZ)]; },
     labelPoint: labelPt,
+    helperSpots, HOLD, kindCol,
+    drawOrder: (entries) => sortObjs(buildObjects(entries, 0)).map((o) => o.tag || 'other'),   // for tests
   };
 })();

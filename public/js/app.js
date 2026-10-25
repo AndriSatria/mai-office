@@ -40,6 +40,7 @@
     a.nextAct = performance.now() + (WANDER_FAST ? rand(1500, 3500) : rand(5000, 14000));
     a.act = null; a.partner = null;
     a.bubble = a.bubble || null; a.bubbleAt = a.bubbleAt || 0;
+    a.helpers = []; a.rcv = null; a.turn = null; a.subs = a.subs || [];
     return a;
   }
 
@@ -52,7 +53,8 @@
         for (const a of m.agents) {
           seen.add(a.id);
           const old = agents.get(a.id);
-          agents.set(a.id, old ? Object.assign(old, a) : decorate(a));
+          const na = old ? Object.assign(old, a) : decorate(a);
+          agents.set(a.id, na); syncHelpers(na, true);
         }
         for (const id of [...agents.keys()]) if (!seen.has(id)) agents.delete(id);
         if (selectedId && !agents.has(selectedId)) selectedId = null;
@@ -67,6 +69,7 @@
           const prev = a.state;
           Object.assign(a, agent);
           if (prev !== a.state && a.state === 'thinking') a.bubble = null;
+          syncHelpers(a, false);
         }
         if (a.id === selectedId) updateHead();
         break;
@@ -88,6 +91,26 @@
         msg.text = m.text;
         if (msg.role === 'assistant') { a.bubble = m.text; a.bubbleAt = performance.now(); }
         if (m.id === selectedId) updateMsgEl(msg);
+        break;
+      }
+      case 'subagent': {
+        const a = agents.get(m.id); if (!a) break;
+        const now = performance.now(), h = a.helpers.find((x) => x.subId === m.sub.subId);
+        if (m.op === 'start') addHelper(a, m.sub, now, true);
+        else if (m.op === 'activity') { if (h) { h.tool = m.sub.tool; h.summary = m.sub.summary; } }
+        else if (m.op === 'end') endHelper(a, m.sub.subId, m.sub.ok, now, true);
+        break;
+      }
+      case 'sub_update': {
+        const a = agents.get(m.id); if (!a) break;
+        const msg = a.transcript.find((x) => x.mid === m.mid); if (!msg) break;
+        msg.sub = m.sub;
+        if (m.id === selectedId) updateMsgEl(msg);
+        break;
+      }
+      case 'relay': {
+        const now = performance.now();
+        flights.push({ kind: 'letter', pid: m.from, toId: m.to, t0: now, dur: 1500 });
         break;
       }
       case 'error': toast(m.message); break;
@@ -123,18 +146,41 @@
     const st = $('chatState'); st.textContent = a.state === 'working' && a.tool ? 'working · ' + a.tool : a.state; st.className = 'pill ' + a.state;
     $('stopBtn').hidden = !(a.state === 'thinking' || a.state === 'working');
     $('queueInfo').textContent = a.queued ? `${a.queued} message(s) queued` : (a.hasSession ? 'session active' : '');
+    $('teamBtn').hidden = a.type !== 'mock';
+    const rt = $('relayTo'), others = [...agents.values()].filter((b) => b.id !== a.id), sig = a.id + '|' + others.map((b) => b.id + b.name).join(',');
+    if (rt.dataset.sig !== sig) {
+      rt.dataset.sig = sig; rt.innerHTML = '<option value="">this agent</option>';
+      for (const b of others) { const o = document.createElement('option'); o.value = b.id; o.textContent = '→ ' + b.name; rt.appendChild(o); }
+      rt.hidden = !others.length; rt.classList.remove('on');
+    }
   }
 
   function appendMsg(m, noScroll) {
     const near = tr.scrollHeight - tr.scrollTop - tr.clientHeight < 60;
-    const el = document.createElement('div');
-    el.className = 'msg ' + m.role + (m.streaming ? ' streaming' : '');
-    el.textContent = m.role === 'tool' ? '▸ ' + m.text : m.text;
+    let el;
+    if (m.role === 'sub') { el = document.createElement('details'); el.className = 'msg sub'; el.innerHTML = '<summary></summary><div class="subLog"></div><div class="subRes"></div>'; fillSub(el, m); }
+    else {
+      el = document.createElement('div');
+      el.className = 'msg ' + m.role + (m.streaming ? ' streaming' : '');
+      el.textContent = m.role === 'tool' ? '▸ ' + m.text : m.text;
+    }
     tr.appendChild(el); msgEls.set(m.mid, el);
     if (!noScroll && near) tr.scrollTop = tr.scrollHeight;
   }
+  const SUB_STATUS = { running: 'started', finished: 'finished', failed: 'failed', lost: 'interrupted' };
+  /** collapsed system line "↳ helper 'explore repo' started / finished", expandable to its activity log */
+  function fillSub(el, m) {
+    const sb = m.sub || { label: '?', status: 'running', log: [] };
+    el.className = 'msg sub ' + sb.status;
+    el.querySelector('summary').textContent = `↳ helper '${sb.label}' ${SUB_STATUS[sb.status] || sb.status}` + (sb.kind ? ` · ${sb.kind}` : '') + (sb.log.length ? ` · ${sb.log.length} step${sb.log.length > 1 ? 's' : ''}` : '');
+    const log = el.querySelector('.subLog'); log.textContent = '';
+    for (const l of sb.log) { const d = document.createElement('div'); d.textContent = '▸ ' + l.tool + (l.summary ? ' ' + l.summary : ''); log.appendChild(d); }
+    if (!sb.log.length) { const d = document.createElement('div'); d.textContent = 'no activity reported'; log.appendChild(d); }
+    el.querySelector('.subRes').textContent = sb.result ? '→ ' + sb.result : '';
+  }
   function updateMsgEl(m) {
     const el = msgEls.get(m.mid); if (!el) return;
+    if (m.role === 'sub') { fillSub(el, m); return; }
     const near = tr.scrollHeight - tr.scrollTop - tr.clientHeight < 60;
     el.textContent = m.text;
     const a = agents.get(selectedId);
@@ -150,7 +196,16 @@
   $('composer').addEventListener('submit', (e) => {
     e.preventDefault();
     const text = $('input').value.trim(); if (!text || !selectedId) return;
-    send({ type: 'send', id: selectedId, text }); $('input').value = '';
+    const to = $('relayTo').value;
+    if (to) { send({ type: 'relay', from: selectedId, to, text }); $('relayTo').value = ''; $('relayTo').classList.remove('on'); }
+    else send({ type: 'send', id: selectedId, text });
+    $('input').value = '';
+  });
+  $('relayTo').addEventListener('change', () => $('relayTo').classList.toggle('on', !!$('relayTo').value));
+  $('teamBtn').addEventListener('click', () => { // mock agents: spawn parallel helpers
+    if (!selectedId) return;
+    const task = $('input').value.trim() || 'Refactor the auth module';
+    send({ type: 'send', id: selectedId, text: '/team ' + task }); $('input').value = '';
   });
   $('input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); }
@@ -208,8 +263,72 @@
       }
       return { id: a.id, name: a.name, type: a.type, slot: a.slot, look: a.look, state: a.state, tool: a.tool, queued: a.queued,
         phase: a.phase, away: a.away, x: a.x, y: a.y, face: a.face || 0, mode: a.mode, bubble,
-        act: a.act ? a.act.kind : null, actP: a.act ? (now - a.act.t0) / 1000 : 0, talk, talkDir: a.chatSide === 0 ? 1 : -1 };
+        act: a.act ? a.act.kind : null, actP: a.act ? (now - a.act.t0) / 1000 : 0, talk, talkDir: a.chatSide === 0 ? 1 : -1,
+        helpers: a.helpers.filter((h) => h.x !== undefined).map((h) => ({ subId: h.subId, label: h.label, kind: h.kind, tool: h.tool, state: h.state, x: h.x, y: h.y, face: h.face, look: h.look, phase: h.phase,
+          age: (now - h.born) / 1000, endAge: h.endAt ? (now - h.endAt) / 1000 : -1 })),
+        waiting: a.helpers.filter((h) => h.state === 'working').length,
+        faceOv: a.turn && now < a.turn.until && !a.away ? a.turn.face : null,
+        rcv: a.rcv ? { age: (now - a.rcv.t0) / 1000, ok: a.rcv.ok } : null };
     });
+  }
+  const flightsView = (now) => flights.map((f) => ({ kind: f.kind, pid: f.pid, toId: f.toId, subId: f.subId, ok: f.ok, p: (now - f.t0) / f.dur }));
+
+  // ---------- helpers (subagents) ----------
+  // A helper is a small "junior" next to the parent's desk. Papers fly parent -> helper when it starts and an envelope
+  // flies back when it ends; the parent glances over and gets a "result arrived" bubble.
+  const flights = [];                // in-flight papers/envelopes/letters
+  const SKINS = ['#f1c7a0', '#e0a878', '#c68642', '#8d5524', '#ffdbac'], HAIRS = ['#2b1b10', '#5a3825', '#b5651d', '#e6c27a', '#1c1c1c', '#9b2d30', '#3a3a8a'], STYLES = ['short', 'spiky', 'bun', 'long', 'cap'];
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const HOLD_OK = () => (Office.HOLD ? Office.HOLD.ok : 1.4) * 1000, HOLD_BAD = () => (Office.HOLD ? Office.HOLD.failed : 2.6) * 1000, FADE = () => (Office.HOLD ? Office.HOLD.fade : 0.7) * 1000;
+  function allocSpot(a) {
+    const taken = new Set();
+    for (const b of agents.values()) for (const h of b.helpers) if (h.x !== undefined) taken.add(Math.floor(h.x) * 100 + Math.floor(h.y));
+    return (Office.helperSpots ? Office.helperSpots(a.slot) : []).find((sp) => !taken.has(Math.floor(sp.x) * 100 + Math.floor(sp.y))) || null;
+  }
+  function turnToward(a, h, ms, now) {
+    const s = Office.SLOTS && Office.SLOTS[a.slot];
+    if (s && s.seat && h.x !== undefined) a.turn = { face: faceOf(h.x - s.seat.x, h.y - s.seat.y), until: now + ms };
+  }
+  function addHelper(a, sub, now, animate) {
+    if (a.helpers.some((x) => x.subId === sub.subId)) return;
+    const h = { subId: sub.subId, label: sub.label, kind: sub.kind, state: 'working', tool: sub.tool || null, summary: null, born: animate ? now : now - 3000, endAt: 0, phase: Math.random(),
+      look: { skin: pick(SKINS), hair: pick(HAIRS), hairStyle: pick(STYLES), pants: pick(['#2d3550', '#3b2f2f', '#2f4a3a', '#4a3a5a']), shirt: Office.kindCol ? Office.kindCol(sub.kind) : '#6cb6ff' } };
+    a.helpers.push(h); placeHelper(a, h, now, animate);
+  }
+  function placeHelper(a, h, now, animate) {
+    const sp = allocSpot(a);
+    if (!sp) return;       // no free tile around the desk: queued until one frees up
+    h.x = sp.x; h.y = sp.y; h.face = sp.face; h.born = animate ? now : h.born;
+    if (animate) { flights.push({ kind: 'out', pid: a.id, subId: h.subId, t0: now + 150, dur: 900 }); turnToward(a, h, 1300, now); }
+  }
+  function endHelper(a, subId, ok, now, animate) {
+    const h = a.helpers.find((x) => x.subId === subId); if (!h || h.state !== 'working') return;
+    h.state = ok === false ? 'failed' : 'ok'; h.endAt = now; h.tool = null;
+    if (h.x === undefined) { a.helpers.splice(a.helpers.indexOf(h), 1); return; }
+    if (animate) { flights.push({ kind: 'back', pid: a.id, subId, ok: ok !== false, t0: now, dur: 1000 }); turnToward(a, h, 1100, now); }
+    else h.endAt = now - 5000;
+  }
+  /** make local helpers match the server's list of running subagents (reconnect / late joiner) */
+  function syncHelpers(a, full) {
+    const now = performance.now(), ids = new Set((a.subs || []).map((x) => x.subId));
+    for (const sub of a.subs || []) addHelper(a, sub, now, false);
+    if (full) for (const h of a.helpers) if (h.state === 'working' && !ids.has(h.subId)) endHelper(a, h.subId, true, now, false);
+  }
+  function updateHelpers(now) {
+    for (const a of agents.values()) {
+      if (a.turn && now > a.turn.until) a.turn = null;
+      for (const h of a.helpers) if (h.x === undefined && h.state === 'working') placeHelper(a, h, now, true);
+      a.helpers = a.helpers.filter((h) => !h.endAt || now - h.endAt < (h.state === 'failed' ? HOLD_BAD() : HOLD_OK()) + FADE() + 120);
+    }
+    for (let i = flights.length - 1; i >= 0; i--) {
+      const f = flights[i];
+      if (!f.done && (f.kind === 'back' || f.kind === 'letter') && now >= f.t0 + f.dur) {
+        f.done = true;
+        const r = agents.get(f.kind === 'letter' ? f.toId : f.pid);
+        if (r) r.rcv = { t0: now, ok: f.ok !== false };
+      }
+      if (now > f.t0 + f.dur + 80) flights.splice(i, 1);
+    }
   }
   function toLogical(ev) {
     const r = canvas.getBoundingClientRect();
@@ -312,15 +431,17 @@
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
-    update(dt, now);
-    Office.render(canvas, S, U, { t: now / 1000, entries: entries(), selectedId, hoverId, hoverSlot });
+    update(dt, now); updateHelpers(now);
+    Office.render(canvas, S, U, { t: now / 1000, entries: entries(), selectedId, hoverId, hoverSlot, flights: flightsView(now) });
     requestAnimationFrame(frame);
   }
 
   // handy for tests / debugging in the console
   window.harness = {
     agents, select, send, view: VIEW, get selected() { return selectedId; }, get hover() { return { id: hoverId, slot: hoverSlot }; },
-    states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind })),
+    states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind, helpers: a.helpers.filter((h) => h.state === 'working').length, subs: (a.subs || []).length })),
+    helpers: (id) => { const a = agents.get(id); return a ? a.helpers.map((h) => ({ subId: h.subId, label: h.label, kind: h.kind, state: h.state, tool: h.tool, x: h.x, y: h.y })) : []; },
+    flights: () => flights.map((f) => ({ kind: f.kind, pid: f.pid, subId: f.subId })),
     // kind: coffee | chat (needs partnerId) | stretch | read | look   (ignores timers/eligibility; for demos & tests)
     forceActivity: (id, kind, partnerId) => { const a = agents.get(id); if (a && !a.away) startActivity(a, kind, partnerId ? agents.get(partnerId) : null); },
     forceWander: (id) => { const a = agents.get(id); if (a && !a.away) startActivity(a, 'coffee'); },
