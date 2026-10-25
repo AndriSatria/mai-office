@@ -116,47 +116,21 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     await page.keyboard.press('Escape');
     await page.evaluate(() => { const d = document.getElementById('hireDlg'); if (d.open) d.close(); });
 
-    // ---- helper spots, door path, depth order, hit testing for visiting helpers ----
-    const hs = await page.evaluate(() => {
-      const O = window.Office, out = { counts: [], bad: [], faces: true, order: {}, hit: [], door: [], tiles: 0 };
-      for (const s of O.SLOTS) {
-        const sp = O.helperSpots(s.i); out.counts.push(sp.length);
-        for (const q of sp) { if (O.isBlocked(Math.floor(q.x), Math.floor(q.y))) out.bad.push([s.i, q.x, q.y]); if (![0, 1, 2, 3].includes(q.face)) out.faces = false; }
-        for (const q of sp.slice(0, 5)) { // door -> spot never crosses furniture (the start tile is the door mat)
-          const pts = O.walkBetween(O.SPOTS.door, q);
-          for (let i = 1; i < pts.length; i++) {
-            const a = pts[i - 1], b = pts[i], len = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)), N = Math.ceil(len * 8);
-            for (let k = 0; k <= N; k++) { const x = a.x + ((b.x - a.x) * k) / N, y = a.y + ((b.y - a.y) * k) / N; for (const [ox, oy] of [[0, 0], [0.2, 0], [-0.2, 0], [0, 0.2], [0, -0.2]]) if (O.isBlocked(Math.floor(x + ox), Math.floor(y + oy))) out.door.push([s.i, x.toFixed(2), y.toFixed(2)]); }
-          }
+    // ---- desk-to-desk routes for the dotted lines / flying papers never cross furniture ----
+    const rt = await page.evaluate(() => {
+      const O = window.Office, bad = [], offs = [-0.2, -0.1, 0, 0.1, 0.2, 0.32]; let n = 0;
+      for (let a = 0; a < 8; a++) for (let b = 0; b < 8; b++) if (a !== b) for (const off of offs) {
+        const pts = O.deskRoute(a, b, off); n++;
+        for (let i = 1; i < pts.length; i++) {
+          const p = pts[i - 1], q = pts[i], N = Math.max(2, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) * 8));
+          for (let k = 0; k <= N; k++) { const x = p[0] + ((q[0] - p[0]) * k) / N, y = p[1] + ((q[1] - p[1]) * k) / N; if (O.isBlocked(Math.floor(x), Math.floor(y))) bad.push([a, b, off, x.toFixed(2), y.toFixed(2)]); }
         }
       }
-      const look = { skin: '#f1c7a0', hair: '#222', hairStyle: 'short', pants: '#333', shirt: '#fff' };
-      const roles = ['security', 'performance', 'tests', 'style', 'docs'];
-      const base = Array.from({ length: 8 }, (_, i) => ({ id: 'a' + i, slot: i, away: false, x: 0, y: 0, look }));
-      // lead at desk 1; 4 visiting helpers (people from desks 4..7, so those desks are empty) stand on the first 4 spots
-      const sp1 = O.helperSpots(1), lead = base[1];
-      const mkH = (i, q) => ({ id: 'h' + i, slot: 4 + i, away: true, mode: 'help', x: q.x, y: q.y, face: q.face, look, phase: 0, help: { role: roles[i], label: roles[i], parentId: 'a1', pose: 'work', phase: 'work' } });
-      const helpers = [0, 1, 2, 3, 4].map((i) => mkH(i, sp1[i]));
-      const all = base.slice(0, 4).concat(helpers.slice(0, 4));   // desks 0-3 seated + 4 helpers whose own desks (4-7) are empty
-      all[1] = lead;
-      const s1 = O.SLOTS[1], seatSum = s1.seat.x + s1.seat.y;
-      const sb = O.helperSpots(1).find((q) => q.x + q.y < seatSum - 1), sf = O.helperSpots(1).find((q) => q.x > s1.dx + 1.2 && q.y > s1.dy && q.y < s1.dy + 2);
-      const probe = all.concat([mkH(8, sb), mkH(9, sf)]);
-      const ord = O.drawOrder(probe), at = (t) => ord.indexOf(t);
-      out.order = { behindChair: at('person:h8') < at('chair1') && at('person:h8') < at('person:a1'), frontOfDesk: at('person:h9') > at('desk1'), spots: [sb, sf] };
-      out.tiles = new Set(helpers.map((h) => Math.floor(h.x) + ',' + Math.floor(h.y))).size;
-      // every helper's head is hittable (nobody standing in front hides a head completely) and resolves to that helper
-      const five = base.slice(0, 4).concat(helpers);
-      for (const h of helpers) { const [hx, hy] = O.project(h.x, h.y, 29); const r = O.hitTest(hx, hy, five); out.hit.push(r && r.id); }
-      return out;
+      return { n, bad: bad.slice(0, 3), nbad: bad.length };
     });
-    assert(hs.counts.every((n) => n >= 5) && hs.bad.length === 0 && hs.faces, `every desk has >=5 free helper spots on walkable tiles (${hs.counts.join(',')})`);
-    assert(hs.door.length === 0, 'door -> helper spot paths never touch furniture');
-    assert(hs.tiles === 5, '5 helpers around one lead stand on 5 different tiles');
-    assert(hs.order.behindChair && hs.order.frontOfDesk, 'helper behind the chair is painted before chair+lead; helper at the desk end is painted after the desk');
-    assert(hs.hit.every((id, i) => id === 'h' + i), `each of 5 helpers around a lead is hit-testable at the head (${hs.hit.join(',')})`);
+    assert(rt.nbad === 0, `all ${rt.n} desk-to-desk dotted routes (every pair, every lane) stay on free floor ${JSON.stringify(rt.bad)}`);
 
-    // ---- live /code-review: existing people walk over, work, hand back, huddle, walk home ----
+    // ---- live /code-review: helpers work at THEIR OWN desks, papers fly along dotted lines, wrap-up at each desk ----
     for (const n of ['Grace', 'Alan']) { await page.evaluate((n) => window.harness.send({ type: 'hire', name: n, cwd: '/tmp' }), n); await sleep(250); }
     await sleep(500);
     const adaId = await page.evaluate(() => [...window.harness.agents.values()].find((a) => a.name === 'Ada').id);
@@ -168,14 +142,16 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     await page.waitForFunction((id) => window.harness.states().filter((s) => s.helping === 'work').length >= 4, adaId, { timeout: 40000 });
     const live = await page.evaluate((id) => {
       const H = window.harness, ppl = [...H.agents.values()], helpers = ppl.filter((a) => H.help(a.id));
-      const tiles = new Set(helpers.map((a) => H.help(a.id).tile));
+      const tiles = new Set(helpers.map((a) => a.slot));
+      const seated = helpers.every((a) => { const h = H.help(a.id); return h.seated && !h.away; });
       const ada = ppl.find((a) => a.id === id);
-      return { n: helpers.length, tiles: tiles.size, roles: helpers.map((a) => H.help(a.id).role).sort(), people: ppl.length, n0: window.__n0, first: window.__first, notAda: !H.help(id),
+      return { n: helpers.length, tiles: tiles.size, seated, roles: helpers.map((a) => H.help(a.id).role).sort(), people: ppl.length, n0: window.__n0, first: window.__first, notAda: !H.help(id),
         sub: document.querySelectorAll('#transcript details.msg.sub').length, open: document.querySelectorAll('#transcript details.msg.sub[open]').length,
         team: document.querySelectorAll('#teamLog .te').length, teamVisible: !document.getElementById('teamBox').hidden,
         tip: H.tooltip(helpers[0].id), names: helpers.map((a) => a.name), hired: ppl.filter((a) => a.transcript.some((m) => /Hired automatically/.test(m.text))).map((a) => a.name) };
     }, adaId);
-    assert(live.n === 4 && live.tiles === 4 && live.notAda, `/code-review: 4 people (not the lead) each on their own tile around Ada (${live.names.join(',')})`);
+    assert(live.n === 4 && live.tiles === 4 && live.notAda, `/code-review: 4 people (not the lead), each from a different desk (${live.names.join(',')})`);
+    assert(live.seated, 'all 4 helpers are SEATED at their own desks while working (nobody standing around the lead)');
     assert(JSON.stringify(live.roles) === JSON.stringify(['performance', 'security', 'style', 'tests']), `helpers carry the 4 derived roles (${live.roles.join(',')})`);
     assert(live.people === live.n0 + 1 && live.hired.length === 1, `office had 3 idle colleagues, so exactly 1 new regular agent was auto-hired (${live.hired.join(',')})`);
     const fp = live.first[live.hired[0]];
@@ -192,20 +168,21 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     assert(await page.evaluate(() => document.querySelectorAll('#transcript details.msg.sub[open]').length === 1), 'expanding a helper line shows its activity log');
     assert(/helper '[^']+' (started|finished)/.test(await page.evaluate(() => document.querySelector('#transcript details.msg.sub summary').textContent)), 'sub line reads "↳ helper \'label\' started/finished"');
     // flights + inferred interactions during the run
-    let kinds = new Set(), sawPeerTalk = false, sawHuddle = false;
+    let kinds = new Set(), sawPeerTalk = false, sawHuddle = false, standing = 0;
     for (let i = 0; i < 700 && !(sawHuddle && kinds.has('back') && kinds.has('out') && sawPeerTalk); i++) {
-      const r = await page.evaluate((id) => ({ f: window.harness.flights().map((f) => f.kind), pe: [...window.harness.agents.values()].some((a) => (window.harness.help(a.id) || {}).peer), hu: window.harness.huddle(id) }), adaId);
-      r.f.forEach((k) => kinds.add(k)); sawPeerTalk = sawPeerTalk || r.pe; sawHuddle = sawHuddle || r.hu; await sleep(60);
+      const r = await page.evaluate((id) => ({ st: window.harness.states().filter((s) => s.helping === 'work' && !s.seated).length, f: window.harness.flights().map((f) => f.kind), pe: [...window.harness.agents.values()].some((a) => (window.harness.help(a.id) || {}).peer), hu: window.harness.huddle(id) }), adaId);
+      standing += r.st; r.f.forEach((k) => kinds.add(k)); sawPeerTalk = sawPeerTalk || r.pe; sawHuddle = sawHuddle || r.hu; await sleep(60);
     }
+    assert(standing === 0, 'during the whole run no working helper was ever standing/walking away from their desk');
     assert(kinds.has('out') && kinds.has('back'), 'paper flies lead -> helper and an envelope flies helper -> lead');
-    assert(sawPeerTalk, 'two helpers touching the same file turn toward each other (inferred peer talk)');
-    assert(sawHuddle, 'team huddle ring shows when every helper has reported');
+    assert(sawPeerTalk, 'two helpers touching the same file talk across their desks via bubbles + a peer line (inferred peer talk), without walking');
+    assert(sawHuddle, 'synchronized wrap-up (celebration at every desk + team wrap-up chip) shows when every helper has reported');
     const inf = await page.evaluate((id) => ({ team: window.harness.team(id), tags: [...document.querySelectorAll('#teamLog .te .inf')].map((e) => e.textContent) }), adaId);
     assert(inf.team.filter((e) => e.kind === 'peer').every((e) => e.inferred) && inf.team.some((e) => e.kind === 'peer') && inf.tags.length >= 1, 'peer entries are flagged inferred and tagged "inferred" in the feed');
     assert(inf.team.some((e) => e.kind === 'handoff' && e.ok === false) && inf.team.some((e) => e.kind === 'huddle'), 'one failing helper is reported in the handoffs; huddle entry exists');
     await page.waitForFunction((id) => window.harness.states().find((a) => a.id === id).state === 'done' || window.harness.states().find((a) => a.id === id).state === 'idle', adaId, { timeout: 60000 });
     await page.waitForFunction(() => window.harness.states().every((a) => !a.helping && a.home) && window.harness.flights().length === 0, null, { timeout: 30000 });
-    assert(true, 'everybody walked back to their own desk (no helper left standing), flights cleaned up');
+    assert(true, 'everybody is released from helper state at their own desk, flights cleaned up');
     const post = await page.evaluate((ids) => ({ sys: ids.map((id) => window.harness.agents.get(id).transcript.some((m) => m.role === 'system' && /^helped Ada: /.test(m.text))),
       ran: window.harness.agents.get(ids[0]).transcript.some((m) => m.role === 'user' && m.text === 'when you are free: ping me'), sub: document.querySelectorAll('#transcript details.msg.sub.finished, #transcript details.msg.sub.failed').length }), hid);
     assert(post.sys.every(Boolean), "each helper's own transcript got a 'helped Ada: …' system line");

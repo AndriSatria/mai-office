@@ -293,20 +293,23 @@
         const beat = Math.floor((now - a.chatStart) / (1700 * TS));
         if (beat % 2 === a.chatSide) talk = Math.floor(beat / 2 + a.chatSide * 2) % 5;
       }
-      let helpV = null, htalk = null, htalkDir = 1;
+      let helpV = null, htalk = null, htalkDir = 1, state = a.state, tool = a.tool;
       if (a.help) {
-        const h = a.help;
-        const pose = h.phase === 'go' ? 'walk' : h.phase === 'work' ? 'work' : h.phase === 'back' ? 'walk'
-          : (h.phase === 'failed' ? 'worry' : (now < h.endAt + 2600 * TS || (h.cheerUntil && now < h.cheerUntil)) ? 'cheer' : 'wait');
+        const h = a.help, desk = !a.away && h.phase !== 'go';
+        const pose = h.phase === 'go' ? 'walk' : h.phase === 'work' ? 'work' : (h.phase === 'failed' ? 'worry' : 'cheer');
+        if (desk) {       // seated at their own desk: typing animation, monitor flicker and tool chip come from the normal "working" rendering
+          if (h.phase === 'work') { state = 'working'; tool = h.tool || 'starting…'; } else { state = h.phase === 'failed' ? 'error' : (h.cheerUntil && now < h.cheerUntil ? 'done' : 'idle'); tool = null; }   // ok: sits satisfied, then everyone celebrates together at wrap-up
+        }
         const pe = h.peer && now < h.peer.until ? agents.get(h.peer.withId) : null;
         if (pe) {
           const beat = Math.floor((now - h.peer.t0) / (1100 * TS));
           if (beat % 2 === h.peer.side) htalk = ({ '?': 2, '!': 1, '...': 0 })[['?', '!', '...'][(h.peer.g + Math.floor(beat / 2)) % 3]];
-          htalkDir = (pe.x - pe.y) >= (a.x - a.y) ? 1 : -1;
+          htalkDir = (pe.slot >> 2) !== (a.slot >> 2) ? ((pe.slot >> 2) > (a.slot >> 2) ? 1 : -1) : ((pe.slot & 3) >= (a.slot & 3) ? 1 : -1);
         }
-        helpV = { role: h.role, label: h.label, tool: h.tool, phase: h.phase, pose, parentId: h.parentId, say: h.say && now < h.sayUntil ? h.say : null, peerWith: pe ? pe.id : null };
+        helpV = { role: h.role, label: h.label, tool: h.tool, phase: h.phase, pose, parentId: h.parentId, parentName: h.parentName, desk, say: h.say && now < h.sayUntil ? h.say : null,
+          peerWith: pe ? pe.id : null, celebrate: desk && h.phase !== 'work' && !!(h.cheerUntil && now < h.cheerUntil) ? (now - (h.cheerUntil - 3400 * TS)) / 1000 : null };
       }
-      return { id: a.id, name: a.name, type: a.type, slot: a.slot, look: a.look, state: a.state, tool: a.tool, queued: a.queued,
+      return { id: a.id, name: a.name, type: a.type, slot: a.slot, look: a.look, state, tool, queued: a.queued,
         phase: a.phase, away: a.away, x: a.x, y: a.y, face: a.face || 0, mode: a.mode, bubble,
         act: a.act ? a.act.kind : null, actP: a.act ? (now - a.act.t0) / 1000 : 0,
         talk: htalk != null ? htalk : talk, talkDir: htalk != null ? htalkDir : (a.chatSide === 0 ? 1 : -1),
@@ -319,87 +322,63 @@
   }
   const flightsView = (now) => flights.map((f) => ({ kind: f.kind, pid: f.pid, hid: f.hid, toId: f.toId, ok: f.ok, p: (now - f.t0) / f.dur }));
 
-  // ---------- helpers (subagents) = EXISTING colleagues ----------
-  // The server assigns every sub-task to an existing person (idle first, otherwise a new regular agent is hired and walks in through the
-  // door). That person gets `helping`; here they walk to the lead's desk, show a role badge + tool chip while working, take a paper from the lead,
-  // hand an envelope (with a short summary bubble) back when done, wait for the team huddle and walk home to their own desk.
-  const flights = [];                // in-flight papers/envelopes/letters
-  const peerQ = [];                  // inferred peer events waiting for both helpers to have arrived
-  const tileKey = (x, y) => Math.floor(x) * 100 + Math.floor(y);
-  function allocSpot(parent) {
-    const taken = [];
-    for (const b of agents.values()) if (b.help && b.help.spot) taken.push(b.help.spot);
-    const free = (Office.helperSpots ? Office.helperSpots(parent.slot) : []).filter((sp) => !taken.some((t) => tileKey(t.x, t.y) === tileKey(sp.x, sp.y)));
-    // best score, but spread people out: a tile next to somebody already standing there costs extra
-    let best = null, bs = Infinity;
-    for (const sp of free) {
-      const near = taken.reduce((n, t) => Math.max(n, 2 - Math.max(Math.abs(t.x - sp.x), Math.abs(t.y - sp.y))), 0);
-      const sc = (sp.score || 0) + near * 0.9;
-      if (sc < bs) { bs = sc; best = sp; }
-    }
-    return best;
-  }
+  // ---------- helpers (subagents) = EXISTING colleagues, working at THEIR OWN desks ----------
+  // The server assigns every sub-task to an existing person (idle first, otherwise a new regular agent is hired and walks in through the door).
+  // That person gets `helping`: if they are away (coffee, chat) they walk back to their own desk, sit and show the helper state there (role badge,
+  // lanyard, tool chip, typing, monitor flicker, "helping <lead>" tag). Nobody walks over to the lead: papers/envelopes/letters fly along dotted
+  // lines between the desks, and the wrap-up is a synchronized celebration at each desk plus the consolidated bubble over the lead.
+  const flights = [];                // in-flight papers/envelopes/letters (drawn along the desk-to-desk lines)
+  const peerQ = [];                  // inferred peer events waiting for both helpers to be working
   function turnToward(a, x, y, ms, now) {
     const s = Office.SLOTS && Office.SLOTS[a.slot];
     if (s && s.seat && !a.away) a.turn = { face: faceOf(x - s.seat.x, y - s.seat.y), until: now + ms };
   }
   const seatOf = (a) => Office.SLOTS[a.slot].seat;
+  const atDesk = (a) => a && !a.away && a.help && a.help.phase !== 'go';
   function beginHelp(a, hp, now, o) {
     o = o || {};
     if (a.help && a.help.subId === hp.subId) return;
-    if (a.help) { a.pendingHelp = hp; if (a.help.phase !== 'back') departHelp(a, now); return; }   // still walking home from the last job
-    const h = { subId: hp.subId, parentId: hp.parentId, parentName: hp.parentName, label: hp.label, role: hp.role, kind: hp.kind, phase: 'go', tool: null, t0: now, endAt: 0,
-      say: null, sayUntil: 0, peer: null, spot: null, ended: null, cheerUntil: 0 };
-    a.help = h;
-    const parent = agents.get(hp.parentId);
-    const spot = parent && !parent.away && Office.walkBetween ? allocSpot(parent) : null;
-    h.spot = spot;
-    if (a.act) { a.act = null; }
-    if (!spot) { h.phase = 'work'; h.seated = true; h.arrivedAt = now; return; }   // flat view / no room: help from their own desk
-    a.partner = null; a.chatStart = 0;
-    if (o.instant) {                        // reconnect: just stand there
-      a.away = true; a.x = spot.x; a.y = spot.y; a.face = spot.face; a.spot = spot; a.mode = 'help'; a.dest = 'help'; h.phase = 'work'; h.arrivedAt = now - 4000; return;
+    a.help = { subId: hp.subId, parentId: hp.parentId, parentName: hp.parentName, label: hp.label, role: hp.role, kind: hp.kind, phase: 'go', tool: null, t0: now, endAt: 0,
+      say: null, sayUntil: 0, peer: null, ended: null, cheerUntil: 0, arrivedAt: 0 };
+    a.pendingHelp = null; a.act = null; a.partner = null; a.chatStart = 0;
+    if (o.instant) { a.away = false; a.mode = 'sit'; arriveHelp(a, now - 4000, true); return; }
+    if (o.enter && Office.walkPath) {           // auto-hired: walks in through the door to their own desk and stays there
+      const pts = Office.walkPath(a.slot, Office.SPOTS.door);
+      a.pts = pts; a.idx = pts.length - 1; a.x = pts[a.idx].x; a.y = pts[a.idx].y; a.spot = Office.SPOTS.door; a.face = Office.SPOTS.door.face;
+      a.away = true; a.mode = 'walk'; a.dest = 'home'; a.dir = -1; a.target = Math.max(0, a.idx - 1);
+      if (pts.length === 1) { a.away = false; a.mode = 'sit'; arriveHelp(a, now); }
+      return;
     }
-    const from = o.enter ? Office.SPOTS.door : a.away ? { x: a.x, y: a.y } : seatOf(a);
-    a.pts = Office.walkBetween(from, spot); a.idx = 0; a.x = a.pts[0].x; a.y = a.pts[0].y;
-    a.spot = spot; a.face = o.enter ? Office.SPOTS.door.face : (a.face || 0); a.away = true; a.mode = 'walk'; a.dest = 'help'; a.dir = 1; a.target = Math.min(1, a.pts.length - 1);
-    if (a.pts.length === 1) arriveHelp(a, now);
+    if (!a.away) { a.mode = 'sit'; arriveHelp(a, now); }      // already at the desk
+    // else: they were at the coffee machine / chatting / walking there: stepWalker sends them home (wantsHome) and arriveHelp runs when they sit
   }
-  function arriveHelp(a, now) {
-    const h = a.help; if (!h) return;
-    a.mode = 'help'; if (h.spot) a.face = h.spot.face; h.arrivedAt = now;
+  function arriveHelp(a, now, quiet) {
+    const h = a.help; if (!h || h.phase !== 'go') return;
+    h.phase = 'work'; h.arrivedAt = now; a.face = 0;
     const parent = agents.get(h.parentId);
-    if (h.ended) { h.phase = 'work'; endHelp(a, h.ended.ok, h.ended.short, now); return; }
-    h.phase = 'work';
-    if (parent) { flights.push({ kind: 'out', pid: parent.id, hid: a.id, t0: now + 200, dur: 1000 * TS }); turnToward(parent, a.x, a.y, 1500 * TS, now); }
+    if (h.ended) { endHelp(a, h.ended.ok, h.ended.short, now); return; }
+    if (parent && !quiet) { flights.push({ kind: 'out', pid: parent.id, hid: a.id, t0: now + 300 * TS, dur: 1500 * TS }); turnToward(parent, seatOf(a).x, seatOf(a).y, 1800 * TS, now); }
   }
   function endHelp(a, ok, short, now) {
-    const h = a.help; if (!h || h.phase === 'ok' || h.phase === 'failed' || h.phase === 'back') return;
-    if (h.phase === 'go') { h.ended = { ok, short }; return; }     // result arrived while still walking over: hand it over on arrival
+    const h = a.help; if (!h || h.phase === 'ok' || h.phase === 'failed') return;
+    if (h.phase === 'go') { h.ended = { ok, short }; return; }     // result arrived while still walking to the desk: hand it over once seated
     h.phase = ok ? 'ok' : 'failed'; h.endAt = now; h.tool = null; h.say = short || (ok ? 'done' : 'failed'); h.sayUntil = now + 3400 * TS;
     const parent = agents.get(h.parentId);
-    if (parent && !h.seated) { flights.push({ kind: 'back', pid: parent.id, hid: a.id, ok, t0: now, dur: 1100 * TS }); turnToward(parent, a.x, a.y, 1200 * TS, now); }
+    if (parent) { flights.push({ kind: 'back', pid: parent.id, hid: a.id, ok, t0: now, dur: 1500 * TS }); turnToward(parent, seatOf(a).x, seatOf(a).y, 1800 * TS, now); }
   }
-  function departHelp(a, now) {
-    const h = a.help; if (!h) return;
-    if (h.phase === 'work' || h.phase === 'go') { h.phase = 'back'; }
-    h.phase = 'back'; h.say = null; h.peer = null;
-    if (h.seated || !a.away || !a.spot || !Office.walkPath) { finishHome(a, now); return; }
-    a.pts = Office.walkPath(a.slot, a.spot); a.idx = a.pts.length - 1; a.target = Math.max(0, a.idx - 1); a.dir = -1; a.mode = 'walk';
-  }
-  function finishHome(a, now) {
-    a.help = null; a.away = false; a.mode = 'sit'; a.partner = null; endAct(a, now);
-    if (a.pendingHelp) { const hp = a.pendingHelp; a.pendingHelp = null; beginHelp(a, hp, now); }
+  /** the helper job is over for the client: back to normal idle, still sitting at their own desk */
+  function releaseHelp(a, now) {
+    a.help = null; a.turn = null; endAct(a, now);
   }
   function onTeamEntry(a, e, now) {
     if (e.kind === 'plan') a.planAt = now;
     else if (e.kind === 'peer') peerQ.push({ e, t: now });
     else if (e.kind === 'mention') {
       const f = agents.get(e.from && e.from.helperId), t = agents.get(e.to && e.to.helperId);
-      if (f && t && f.help && t.help && f.mode === 'help' && t.mode === 'help') flights.push({ kind: 'letter', pid: f.id, toId: t.id, t0: now + 600 * TS, dur: 1400 * TS });
+      if (atDesk(f) && atDesk(t)) flights.push({ kind: 'letter', pid: f.id, toId: t.id, t0: now + 600 * TS, dur: 1400 * TS });
     } else if (e.kind === 'huddle') {
-      a.huddle = { t0: now, until: now + 3000 * TS }; a.bubble = e.text; a.bubbleAt = now;
-      for (const b of agents.values()) if (b.help && b.help.parentId === a.id && (b.help.phase === 'ok' || b.help.phase === 'failed')) b.help.cheerUntil = a.huddle.until;
+      a.huddle = { t0: now, until: now + 3400 * TS }; a.bubble = e.text; a.bubbleAt = now;
+      for (const b of agents.values()) if (b.help && b.help.parentId === a.id && (b.help.phase === 'ok' || b.help.phase === 'failed')) b.help.cheerUntil = a.huddle.until;   // synchronized celebration at every helper desk
     }
   }
   /** make local state match the server (reconnect / late joiner / missed events) */
@@ -414,25 +393,22 @@
       if (a.huddle && now > a.huddle.until + 500) a.huddle = null;
       const h = a.help; if (!h) continue;
       if (h.say && now > h.sayUntil) h.say = null;
+      if (h.phase === 'go' && !a.away) { a.mode = 'sit'; arriveHelp(a, now); }
       if (h.peer) {
         const o = agents.get(h.peer.withId);
-        if (now < h.peer.until && o && a.mode === 'help') a.face = faceOf(o.x - a.x, o.y - a.y); else { h.peer = null; if (h.spot && a.mode === 'help') a.face = h.spot.face; }
-      } else if (a.mode === 'help' && h.spot && h.phase !== 'back') {      // finished helpers look at the lead
-        const parent = agents.get(h.parentId);
-        if (parent && (h.phase !== 'work')) a.face = faceOf(seatOf(parent).x - a.x, seatOf(parent).y - a.y); else a.face = h.spot.face;
+        if (now < h.peer.until && o && !a.away) turnToward(a, seatOf(o).x, seatOf(o).y, 300, now); else h.peer = null;
       }
-      if (h.phase === 'ok' || h.phase === 'failed') {
+      if (h.phase === 'ok' || h.phase === 'failed') {          // wait (at the desk) until the team wrapped up, then back to normal idle
         const parent = agents.get(h.parentId);
         const others = [...agents.values()].some((b) => b !== a && b.help && b.help.parentId === h.parentId && (b.help.phase === 'go' || b.help.phase === 'work'));
-        const huddling = parent && parent.huddle && now < parent.huddle.until;
-        if (!parent || now > h.endAt + 7500 * TS || (now > h.endAt + 2600 * TS && !others && !huddling)) departHelp(a, now);
-        else if (h.seated && now > h.endAt + 1500 * TS) departHelp(a, now);
+        const wrapping = parent && parent.huddle && now < parent.huddle.until;
+        if (!parent || now > h.endAt + 8000 * TS || (now > h.endAt + 2600 * TS && !others && !wrapping)) releaseHelp(a, now);
       }
     }
     for (let i = peerQ.length - 1; i >= 0; i--) {
       const q = peerQ[i], e = q.e, A = agents.get(e.from && e.from.helperId), B = agents.get(e.to && e.to.helperId);
       if (!A || !B || now - q.t > 10000 * TS) { peerQ.splice(i, 1); continue; }
-      if (A.mode === 'help' && B.mode === 'help' && A.help && B.help && A.help.phase === 'work' && B.help.phase === 'work') {
+      if (A.help && B.help && !A.away && !B.away && A.help.phase === 'work' && B.help.phase === 'work') {
         const g = Math.max(0, ['?', '!', '...'].indexOf(e.glyph)), until = now + 3600 * TS;
         A.help.peer = { withId: B.id, t0: now, until, side: 0, g, why: e.text }; B.help.peer = { withId: A.id, t0: now, until, side: 1, g, why: e.text };
         peerQ.splice(i, 1);
@@ -479,7 +455,7 @@
   // sip coffee, or meet another idle agent by the coffee machine for a chat. Anything non-idle sends them home.
   const SPEED = Office.SPEED;     // world units per second (px in the flat view, tiles in the iso view)
   const faceOf = (dx, dy) => (Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3)); // 0 SE 1 SW 2 NW 3 NE
-  const wantsHome = (a) => a.help && a.help.phase !== 'back' ? false : (a.state !== 'idle' && a.state !== 'done') || a.id === selectedId;
+  const wantsHome = (a) => !!a.help || (a.state !== 'idle' && a.state !== 'done') || a.id === selectedId;
   const socialBusy = () => { for (const a of agents.values()) if (a.away) return true; return false; };
   const canStart = (a) => !a.away && !a.act && !a.help && !a.pendingHelp && !a.helping && a.state === 'idle' && a.id !== selectedId;
   const endAct = (a, now) => { a.act = null; a.nextAct = now + (WANDER_FAST ? rand(2000, 4000) : rand(8000, 22000)); };
@@ -511,7 +487,6 @@
   function leave(a) { a.mode = 'walk'; a.dir = -1; a.target = a.pts.length - 2; a.partner = null; a.chatStart = 0; }
 
   function stepWalker(a, dt, now) {
-    if (a.mode === 'help') return;
     if (a.mode === 'drink') { if (now > a.drinkUntil || wantsHome(a)) leave(a); return; }
     if (a.mode === 'chat') {
       const p = agents.get(a.partner);
@@ -528,11 +503,10 @@
       if (a.dir === 1) {
         if (a.target === a.pts.length - 1) {
           if (a.spot && a.spot.face !== undefined) a.face = a.spot.face;
-          if (a.dest === 'help') arriveHelp(a, now);
-          else if (a.dest === 'drink') { a.mode = 'drink'; a.drinkUntil = now + (WANDER_FAST ? 4000 : rand(5000, 10000)) * TS; }
+          if (a.dest === 'drink') { a.mode = 'drink'; a.drinkUntil = now + (WANDER_FAST ? 4000 : rand(5000, 10000)) * TS; }
           else { a.mode = 'chat'; a.waitSince = now; }
         } else a.target++;
-      } else if (a.target === 0) { if (a.help && a.help.phase === 'back') finishHome(a, now); else { a.away = false; a.mode = 'sit'; a.partner = null; endAct(a, now); } }
+      } else if (a.target === 0) { a.away = false; a.mode = 'sit'; a.partner = null; if (a.help && a.help.phase === 'go') arriveHelp(a, now); else endAct(a, now); }
       else a.target--;
     } else { a.x += (dx / d) * stepLen; a.y += (dy / d) * stepLen; a.face = faceOf(dx, dy); }
   }
@@ -568,8 +542,8 @@
   // handy for tests / debugging in the console
   window.harness = {
     agents, select, send, view: VIEW, get selected() { return selectedId; }, get hover() { return { id: hoverId, slot: hoverSlot }; },
-    states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind, subs: (a.subs || []).length, helping: a.help ? a.help.phase : null, home: !a.away })),
-    help: (id) => { const a = agents.get(id); return a && a.help ? { phase: a.help.phase, parentId: a.help.parentId, role: a.help.role, label: a.help.label, tool: a.help.tool, say: a.help.say, x: a.x, y: a.y, mode: a.mode, away: a.away, spot: a.help.spot, peer: !!a.help.peer, tile: Math.floor(a.x) + ',' + Math.floor(a.y) } : null; },
+    states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind, subs: (a.subs || []).length, helping: a.help ? a.help.phase : null, home: !a.away, seated: !a.away && a.mode === 'sit' })),
+    help: (id) => { const a = agents.get(id); return a && a.help ? { phase: a.help.phase, parentId: a.help.parentId, role: a.help.role, label: a.help.label, tool: a.help.tool, say: a.help.say, x: a.x, y: a.y, mode: a.mode, away: a.away, seated: !a.away && a.mode === 'sit', peer: !!a.help.peer, tile: Math.floor(a.x) + ',' + Math.floor(a.y) } : null; },
     team: (id) => { const a = agents.get(id); return a ? a.team.slice() : []; },
     huddle: (id) => { const a = agents.get(id); return !!(a && a.huddle && performance.now() < a.huddle.until); },
     tooltip: (id) => tooltip(agents.get(id)),

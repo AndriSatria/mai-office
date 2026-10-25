@@ -100,7 +100,7 @@ const teamShots = require('./team-shots');
     await page.evaluate(() => window.harness.select(null));
     await page.waitForFunction(() => window.harness.states().every((a) => !a.away && a.state !== 'working' && a.state !== 'thinking'), null, { timeout: 20000 });
     await teamShots(page, 'Ada', { mid: () => shot('15-team-code-review-4-helpers.png'), peer: () => shot('16-team-peer-conversation.png'),
-      handoff: () => shot('18-team-result-handoff.png'), huddle: () => shot('17-team-huddle.png'), walkback: () => shot('20-team-helper-walking-back.png') }, sleep);
+      handoff: () => shot('18-team-result-handoff.png'), huddle: () => shot('17-team-huddle.png') }, sleep);
     // agent-to-agent: a letter flies from Ada to Ken
     await page.selectOption('#relayTo', { label: '→ Ken' });
     await page.fill('#input', 'can you review my diff?'); await page.press('#input', 'Enter');

@@ -35,40 +35,44 @@ drawers, chair), plants, and a coffee corner (counter, machine, kettle, mugs, ru
   green + “＋ hire” on an empty desk), plus an ellipse under a selected agent who is away from the desk.
 * **Overlays** (name pill, type badge, tool chip, queued pill, speech bubbles) are drawn at full resolution on top of the
   scaled canvas, anchored to projected points.
-* **Flat view:** `http://localhost:3000/?view=flat` still gives the original top-down renderer (`office-flat.js`); it shows helpers working from their own desks (no walking).
+* **Flat view:** `http://localhost:3000/?view=flat` still gives the original top-down renderer (`office-flat.js`); it shows helpers working from their own desks.
 
 ## Team collaboration: colleagues help each other
 
 One project, several agents: when an agent runs work in parallel (a Claude `Task`/`Agent` fan-out such as `/code-review`, Cursor helper tasks,
-or the mock's simulated team) the helpers are **the people who already work in the office**. Nobody pops in or fades out.
+or the mock's simulated team) the helpers are **the people who already work in the office**. Nobody pops in or fades out, and **nobody walks over to the
+lead**: every helper does the job **at their own desk**, and the exchange is drawn between the desks.
 
 ![4 helpers](screenshots/15-team-code-review-4-helpers.png)
 ![peer talk](screenshots/16-team-peer-conversation.png)
-![huddle](screenshots/17-team-huddle.png)
+![wrap-up](screenshots/17-team-huddle.png)
 ![handoff](screenshots/18-team-result-handoff.png)
-![walking back](screenshots/20-team-helper-walking-back.png)
 
-* **Who helps:** each subagent is assigned to an existing colleague, **idle ones first** (fewest times helped first). If nobody is idle a new regular,
-  persistent agent is **auto-hired** (max 8 desks, mock type) at a free desk and **walks in through the entrance door** (no pop-in). If the office is
-  full the subagent waits (pending) and is assigned when somebody frees up. In the flat view helpers just work from their own desks.
-* **Helping status:** the colleague gets a temporary "helping <parent> · role" status, walks to the lead's desk area (free tiles on a ring ~2.4 tiles
-  around the lead, never on furniture and never hiding the lead; depth-sorted), and shows a **role badge + coloured lanyard** (no new look) and a tool
-  chip while working. A paper flies lead → helper on arrival; dotted isometric lines connect lead and helpers. When the helper ends, an **envelope with
-  a short summary bubble** ("found 3 issues", failures show `!`) flies back to the lead; the helper cheers (or looks worried) and **walks back to its own
-  desk** and returns to idle, once the lead's other helpers have reported and the huddle is over.
+* **Who helps:** each subagent is assigned to an existing colleague, **idle ones first** (fewest times helped first). If that person is away (coffee, chatting)
+  they **walk back to their own desk and sit** before the job shows; idle wandering is suppressed while they help and resumes afterwards. If nobody is idle a
+  new regular, persistent agent is **auto-hired** (max 8 desks, mock type): it **walks in through the entrance door to its own desk** and stays there. If the office
+  is full the subagent waits (pending) and is assigned when somebody frees up. In the flat view helpers also just work from their own desks.
+* **Helping status (at the helper's desk):** a temporary **role badge + coloured lanyard/ID card** (no new look), a **tool chip**, typing animation, monitor flicker,
+  a glowing pad on the floor in front of the desk and a **"helping <lead> · role"** tag under the name.
+* **Communication without moving:** **dotted isometric lines** run along the aisles from the lead's desk to every helper desk (one lane per helper so lines do
+  not lie on top of each other; routes are checked in `test-iso` never to cross furniture). A **paper** flies lead → helper along its line at hand-off, and an
+  **envelope with a short summary bubble** ("found 3 issues", failures show `!`) flies helper → lead when it finishes; small bubbles appear at each desk.
+  Inferred peer interactions (two helpers on the same file) are a **white dotted line + `?`/`!`/`…` bubbles + a letter between the two desks**.
+* **Wrap-up (replaces the huddle):** when the last helper has reported, every helper desk celebrates **at the same time** (gold ring, sparkles, check mark, arms up),
+  the lead gets a "team wrap-up" chip and the consolidated bubble. Afterwards everybody simply drops the helper state, still sitting, and idle behaviour resumes.
 * **Roles** (`lib/roles.js`) come from the Task input (`subagent_type`, then description, then prompt) by keyword: `security` (red), `performance`
   (orange), `tests` (green), `style` (purple), `docs` (blue), `architecture` (pink), `explore` (cyan), otherwise `general` (grey); each has a small icon in its badge.
 * **Messages to a helping colleague** are queued (`+N queued` pill) and run after the helper job ended (+ a short hold). Their transcript only gets one
   system line, `helped <parent>: <label>`. The chat header shows "helping <parent> · role".
 * **Inferred interactions.** Claude subagents cannot message each other, so these are *inferred from the event stream* and labelled **inferred** (tooltip on
   the person, the "Team activity" feed and this README). They never change what the agents actually do:
-  1. two helpers that touch the **same file/pattern** within a time window turn toward each other and trade `?` / `!` / `…` bubbles (throttled: one pair at
-     a time, a cooldown per pair, max 6 per run);
+  1. two helpers that touch the **same file/pattern** within a time window turn their heads toward each other and trade `?` / `!` / `…` bubbles over the
+     dotted desk-to-desk line (throttled: one pair at a time, a cooldown per pair, max 6 per run);
   2. when a helper ends it **hands an envelope to the lead** with a short summary, plus a **letter to another helper** if its result text mentions that helper's role;
-  3. the lead **announces the plan** (clipboard icon, a paper per helper) at the start and holds a **team huddle** (ring on the floor, "team huddle" chip,
+  3. the lead **announces the plan** (clipboard icon, a paper per helper) at the start and holds the **team wrap-up** (celebration at every helper desk, "team wrap-up" chip,
      consolidated bubble) once the last helper has reported.
 * **Chat panel:** every helper is one collapsed line (`↳ helper 'label' started · role · helperName · N steps`) and a collapsible **👥 Team activity**
-  feed per lead lists the plan, assignments, peer chats, handoffs, mentions and the huddle; inferred entries carry an `inferred` tag with the reason.
+  feed per lead lists the plan, assignments, peer chats, handoffs, mentions and the wrap-up; inferred entries carry an `inferred` tag with the reason.
 * **Mock mode:** `/code-review` (4 role helpers with overlapping files and different durations, one fails, then a consolidated summary), `/team <task>`
   (3 helpers), a message containing "in parallel"/"subagents" ("fail" makes the last one fail), or the **👥 Team task** button. `scripts/fake-claude.js`
   emulates a `/code-review` Task fan-out for the real Claude adapter path.
@@ -81,11 +85,8 @@ or the mock's simulated team) the helpers are **the people who already work in t
 * **Pacing:** `HARNESS_SLOW=N` stretches the server timers (release/hold/inference windows and the mock's timings), `?slow=N` stretches walking speed and bubble
   lifetimes in the page. The demo videos use 2 (`DEMO_SLOW`).
 
-**Demo videos** (1920×1080, H.264, slow pace: every bubble/chip/handoff stays up ≥2.5 s and each beat has a bottom caption):
-`demo/mai-office-demo.mp4` (empty office → hire 4 agents → idle stretch/coffee chat → a message to Ada → `/team` with 3 colleagues walking over, handoffs and
-dotted lines → results return, check mark + reply bubble) and `demo/mai-office-demo-codereview.mp4` (`/code-review`: plan, colleagues walk over, an auto-hired
-colleague walks in through the door, role badges + tool chips, inferred peer talk, a failing helper, handoffs, huddle, everyone walks back, consolidated reply).
-Re-record with `npm run demo:video`, `npm run demo:video:codereview` or `npm run demo:videos` (mock mode, Playwright `recordVideo` + ffmpeg).
+**Demo videos:** `demo/mai-office-demo.mp4` and `demo/mai-office-demo-codereview.mp4` were recorded **before** the "helpers stay at their own desks" change
+and still show helpers walking to the lead, so they are **outdated** (not re-recorded). `npm run demo:videos` re-records them (mock mode, Playwright `recordVideo` + ffmpeg).
 
 **Not verified against real CLIs:** the Claude `Task` / `parent_tool_use_id` handling follows the documented stream-json shape and is only tested with
 `scripts/fake-claude.js`; the Cursor helper shape is a guess; role derivation, the inferred interactions, assignment/auto-hire and relay were exercised with the
@@ -243,10 +244,10 @@ npm run screenshots     # uses the fake claude/cursor CLIs so all agent types ap
 
 Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, wandering, coffee break, fire),
 `10-idle-stretch-read-look`, `11`/`11b-idle-chat-at-coffee`, `12-hire-dialog-agent-type`, `13-flat-view-fallback` (`?view=flat`),
-`14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`, `20-team-helper-walking-back`. (`07-wandering` is the walking agent.)
+`14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`. (`17-team-huddle` is the synchronized wrap-up; `07-wandering` is the walking agent.)
 
 **HD shots:** `npm run screenshots:hd` renders a 1920×1080 viewport at deviceScaleFactor 2 and saves 3840×2160 PNGs to `screenshots/hd/`
-(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`09` team: /code-review with 4 helpers, peer conversation, huddle, result handoff, helper walking back). The canvas backing store is in device pixels with an integer
+(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`08` team: /code-review with 4 helpers, peer conversation, wrap-up, result handoff). The canvas backing store is in device pixels with an integer
 scale (×7 at DPR 2), so nothing is resampled; the script asserts this before capturing. Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
 
 ## Known limitations / ideas

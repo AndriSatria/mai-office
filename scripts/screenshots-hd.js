@@ -96,7 +96,7 @@ const teamShots = require('./team-shots');
     await page.evaluate(() => window.harness.select(null));
     await idle();
     await teamShots(page, 'Ada', { mid: () => shot('05-team-code-review-4-helpers-hd.png'), peer: () => shot('06-team-peer-conversation-hd.png'),
-      handoff: () => shot('08-team-result-handoff-hd.png'), huddle: () => shot('07-team-huddle-hd.png'), walkback: () => shot('09-team-helper-walking-back-hd.png') }, sleep);
+      handoff: () => shot('08-team-result-handoff-hd.png'), huddle: () => shot('07-team-huddle-hd.png') }, sleep);
   } finally {
     await browser.close(); srv.kill('SIGTERM');
     try { fs.unlinkSync(DATA); } catch (_) {}
