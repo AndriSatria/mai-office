@@ -65,8 +65,26 @@ async function codeReview() {
   out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid });
 }
 
+// Plan mode (`--permission-mode plan`): read-only exploration, the plan as text, then the ExitPlanMode tool_use (which headless runs get denied), then the result.
+async function plan() {
+  const plan = '## Plan: ' + prompt.slice(0, 50) + '\n1. Read the entry points.\n2. Change the handler.\n3. Add tests.';
+  out({ type: 'assistant', session_id: sid, parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: 'Exploring first (plan mode, read-only).' }, { type: 'tool_use', id: 'p1', name: 'Read', input: { file_path: 'src/index.js' } }] } });
+  await wait(700);
+  out({ type: 'user', session_id: sid, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'p1', content: 'ok' }] } });
+  await wait(500);
+  out({ type: 'assistant', session_id: sid, parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: plan }] } });
+  await wait(500);
+  if (!/noexit/i.test(prompt)) out({ type: 'assistant', session_id: sid, parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'p2', name: 'ExitPlanMode', input: { plan } }] } });
+  await wait(500);
+  if (!/noexit/i.test(prompt)) out({ type: 'user', session_id: sid, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'p2', is_error: true, content: 'Exit plan mode? (needs approval)' }] } });
+  const text = '(fake claude plan) ' + plan;
+  out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid });
+}
+
 (async () => {
-  out({ type: 'system', subtype: 'init', session_id: sid, cwd: process.cwd(), tools: ['Bash', 'Read'] });
+  const pmi = args.indexOf('--permission-mode'), pmode = pmi >= 0 ? args[pmi + 1] : undefined;
+  out({ type: 'system', subtype: 'init', session_id: sid, cwd: process.cwd(), tools: ['Bash', 'Read'], permissionMode: pmode || 'default' });
+  if (pmode === 'plan') { await plan(); return; }
   if (/code-review/i.test(prompt)) { await codeReview(); return; }
   if (/parallel|team/i.test(prompt)) { await team(); return; }
   await wait(600);

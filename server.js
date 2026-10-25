@@ -44,6 +44,8 @@ wss.on('connection', (ws) => {
         case 'fire': harness.fire(m.id); break;
         case 'send': harness.send(m.id, m.text); break;
         case 'interrupt': harness.interrupt(m.id); break;
+        case 'promote': harness.setMain(m.id); break;
+        case 'permission': harness.setPermissionMode(m.id, m.mode); break;
         case 'relay': harness.relay(m.from, m.to, m.text); break;
         default: break;
       }

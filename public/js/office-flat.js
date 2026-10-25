@@ -10,6 +10,7 @@
   const ROWS = [94, 178];
   const SLOTS = [];
   for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) SLOTS.push({ cx: COLS[c], cy: ROWS[r], row: r, col: c });
+  SLOTS.push({ cx: 350, cy: 178, row: 1, col: 4, mgr: true });   // slot 8: the manager desk (main agent), bottom-right corner
   const AISLE = [132, 214];
   const COFFEE = { x: 350, y: 100 };
   const MAX_SLOTS = SLOTS.length;
@@ -451,7 +452,7 @@
       const labY = (s.cy + 28) * S;
       const dotCol = STATE_COL[e.state] || '#999';
       const tb = TYPE_BADGE[e.type];
-      const nameTxt = '   ' + e.name;
+      const nameTxt = '   ' + (e.main ? '★ ' : '') + e.name;
       const nw = measurePill(ctx, nameTxt, U, sel);
       const bw = tb ? measurePill(ctx, tb.text, U * 0.8, true) : 0;
       const gap = tb ? Math.round(3 * U) : 0;
@@ -494,7 +495,7 @@
     drawHead(c, 10, 8, look, { mood: 'happy' });
   }
 
-  window.OfficeFlat = { W, H, SLOTS, MAX_SLOTS, render, hitTest, walkPath, SPOTS, drawAvatar, COFFEE, AISLE,
+  window.OfficeFlat = { W, H, SLOTS, MAX_SLOTS, MGR: 8, render, hitTest, walkPath, SPOTS, drawAvatar, COFFEE, AISLE,
     SPEED: 40, STEP: 0.5, // walking speed in world units/s (px here) and canvas scale step
     // helpers re-used by the isometric renderer
     shared: { R, shade, rnd, disc, line, bmp, stateIcon, drawTalk, pillText, measurePill, drawBubble, TYPE_BADGE, STATE_COL, dashedRect } };

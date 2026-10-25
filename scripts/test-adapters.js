@@ -165,6 +165,70 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   await waitFor(() => log.slice(mark).some((m) => m.type === 'error' && /different agent/.test(m.message)), 5000);
   assert(true, 'relay: sending to yourself is rejected');
   await waitFor(() => log.slice(mark).some((m) => m.type === 'agent' && m.agent.id === ids.Cur.id && m.agent.state === 'done'), 20000);
+
+  // ---------- manager desk (main agent), permission modes, plan mode ----------
+  {
+    assert(snap.mgrSlot === 8 && ids.Cur.main === true && ids.Cur.slot === 8 && !ids.Cla.main && !ids.Moc.main && ids.Cla.slot < 8 && ids.Moc.slot < 8, 'first hire is the main agent and sits at the manager desk (slot 8), the others at regular desks: ' + ['Cur', 'Cla', 'Moc'].map((n) => n + ':' + ids[n].slot).join());
+    const latest = (id) => log.filter((m) => m.type === 'agent' && m.agent.id === id).map((m) => m.agent).at(-1);
+    const planStates = (id, from) => log.slice(from).filter((m) => m.type === 'agent' && m.agent.id === id).map((m) => m.agent.plan ? m.agent.plan.state : null);
+    // claude hired in plan mode -> --permission-mode plan -> init permissionMode 'plan' -> planning, then ExitPlanMode -> ready (+summary), then cleared after the hold
+    for (const a of Object.values(agentsNow())) if (![ids.Cur.id, ids.Cla.id, ids.Moc.id].includes(a.id)) ws.send(JSON.stringify({ type: 'fire', id: a.id }));   // make room (helpers were auto-hired)
+    await sleep(500);
+    let mk = log.length;
+    ws.send(JSON.stringify({ type: 'hire', name: 'Pla', cwd: '/tmp', agentType: 'claude', permissionMode: 'plan' }));
+    const pla = (await waitFor(() => log.slice(mk).find((m) => m.type === 'agent' && m.isNew && m.agent.name === 'Pla'))).agent;
+    assert(pla.permissionMode === 'plan' && !pla.main, 'hire with permissionMode=plan is stored on the agent');
+    ws.send(JSON.stringify({ type: 'send', id: pla.id, text: 'add dark mode' }));
+    await waitFor(() => planStates(pla.id, mk).includes('ready'), 20000);
+    const seq = planStates(pla.id, mk).filter((x, i, a) => i === 0 || a[i - 1] !== x);
+    assert(seq[0] === null && seq.includes('planning') && seq.indexOf('planning') < seq.indexOf('ready'), 'claude plan mode: planning -> ready: ' + seq.join('>'));
+    const ready = log.slice(mk).map((m) => m.agent).filter((a) => a && a.id === pla.id && a.plan && a.plan.state === 'ready')[0];
+    assert(/Plan: add dark mode/.test(ready.plan.summary) && /Read the entry points/.test(ready.plan.summary), 'ExitPlanMode plan text becomes the summary: ' + ready.plan.summary);
+    assert(log.slice(mk).some((m) => m.type === 'msg' && m.id === pla.id && m.msg.role === 'system' && /gathering at the round table/.test(m.msg.text)), 'transcript notes the gathering');
+    await waitFor(() => latest(pla.id).state === 'done', 10000);
+    assert(latest(pla.id).plan && latest(pla.id).plan.state === 'ready', 'the plan check stays up right after the run ends (hold)');
+    await waitFor(() => latest(pla.id).plan === null, 15000);
+    assert(true, 'plan is cleared after the hold -> everybody walks back');
+    // no ExitPlanMode: the result still counts as the plan being ready
+    mk = log.length;
+    ws.send(JSON.stringify({ type: 'send', id: pla.id, text: 'noexit please' }));
+    await waitFor(() => planStates(pla.id, mk).includes('ready'), 20000);
+    assert(true, 'plan mode without ExitPlanMode: ready is raised when the run ends');
+    await waitFor(() => latest(pla.id).plan === null, 15000);
+    // permission toggle + persistence message + mock /plan
+    mk = log.length;
+    ws.send(JSON.stringify({ type: 'permission', id: ids.Moc.id, mode: 'plan' }));
+    await waitFor(() => latest(ids.Moc.id).permissionMode === 'plan');
+    ws.send(JSON.stringify({ type: 'permission', id: ids.Moc.id, mode: 'default' }));
+    await waitFor(() => latest(ids.Moc.id).permissionMode === 'default');
+    ws.send(JSON.stringify({ type: 'permission', id: ids.Moc.id, mode: 'bogus' }));
+    await sleep(200);
+    assert(latest(ids.Moc.id).permissionMode === 'default', 'permission toggles plan<->default, unknown modes are ignored');
+    mk = log.length;
+    ws.send(JSON.stringify({ type: 'send', id: ids.Moc.id, text: '/plan add dark mode' }));
+    await waitFor(() => planStates(ids.Moc.id, mk).includes('ready'), 30000);
+    const mseq = planStates(ids.Moc.id, mk).filter((x, i, a) => i === 0 || a[i - 1] !== x);
+    assert(mseq.includes('planning') && mseq.indexOf('planning') < mseq.indexOf('ready'), 'mock /plan: planning -> ready: ' + mseq.join('>'));
+    assert(log.slice(mk).some((m) => m.type === 'msg' && m.id === ids.Moc.id && m.msg.role === 'tool' && /^Read/.test(m.msg.text)), 'mock plan mode explores read-only first (Read tool)');
+    assert(!log.slice(mk).some((m) => m.type === 'msg' && m.id === ids.Moc.id && m.msg.role === 'tool' && /^(Edit|Write|Bash)/.test(m.msg.text)), 'mock plan mode does not edit or run commands');
+    assert(latest(ids.Moc.id).permissionMode === 'default', '/plan is a one-shot plan run (permission mode unchanged)');
+    await waitFor(() => latest(ids.Moc.id).plan === null, 25000);
+    // promote: swaps desks with the current main
+    mk = log.length;
+    const before = { moc: latest(ids.Moc.id).slot, cur: latest(ids.Cur.id).slot };
+    ws.send(JSON.stringify({ type: 'promote', id: ids.Moc.id }));
+    await waitFor(() => latest(ids.Moc.id).main === true);
+    await sleep(150);
+    assert(latest(ids.Moc.id).slot === 8 && latest(ids.Cur.id).slot === before.moc && latest(ids.Cur.id).main === false, `promote: manager desk swapped (Moc ${before.moc}->8, Cur 8->${before.moc})`);
+    // fire the main: another agent is promoted automatically
+    mk = log.length;
+    ws.send(JSON.stringify({ type: 'fire', id: ids.Moc.id }));
+    await waitFor(() => log.slice(mk).some((m) => m.type === 'agent' && m.agent.main && m.agent.id !== ids.Moc.id));
+    const nm = log.slice(mk).filter((m) => m.type === 'agent' && m.agent.main && m.agent.id !== ids.Moc.id).at(-1).agent;
+    assert(nm.slot === 8, 'firing the main agent promotes another one to the manager desk (' + nm.name + ')');
+    ws.send(JSON.stringify({ type: 'fire', id: pla.id }));
+    await sleep(200);
+  }
   ws.close(); await sleep(500); srv.kill('SIGTERM'); await sleep(500);
 
   // ---------- in-process: office full -> helper job waits; freed person picks it up ----------
@@ -172,10 +236,10 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
     const { Harness } = require('../lib/harness');
     const stub = { defaultType: 'mock', types: { mock: { id: 'mock', label: 'Mock', available: true, adapter: { run() { return { cancel() {} }; } } } } };
     const h = new Harness({ dataFile: path.join(os.tmpdir(), `mai-office-unit-${Date.now()}.json`), registry: stub });
-    const names = ['P', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
+    const names = ['P', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
     const ag = names.map((n) => h.hire({ name: n, cwd: '/tmp', agentType: 'mock' }));
     const evs = []; h.on('event', (e) => evs.push(e));
-    for (const a of ag.slice(1)) h.send(a.id, 'busy');           // everybody but the lead is working: nobody idle, office full (8)
+    for (const a of ag.slice(1)) h.send(a.id, 'busy');           // everybody but the lead is working: nobody idle, office full (8 desks + manager desk = 9)
     h.send(ag[0].id, 'lead'); const lead = h.agents.get(ag[0].id);
     h._onEvent(lead, lead.run, { type: 'subagent_start', subId: 's1', label: 'security review', kind: 'security-reviewer' });
     const st = evs.find((e) => e.type === 'subagent' && e.op === 'start');
@@ -194,7 +258,9 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   srv = startServer({ HARNESS_MODE: 'mock' }); await sleep(1000);
   ({ ws, snap } = await client());
   const byName = Object.fromEntries(snap.agents.map((a) => [a.name, a.type]));
-  assert(snap.defaultType === 'mock' && byName.Cur === 'cursor' && byName.Cla === 'claude' && byName.Moc === 'mock', 'agent types persisted across restart: ' + JSON.stringify(byName));
+  assert(snap.defaultType === 'mock' && byName.Cur === 'cursor' && byName.Cla === 'claude' && !('Moc' in byName), 'agent types persisted across restart (Moc was fired): ' + JSON.stringify(byName));
+  const cur2 = snap.agents.find((a) => a.name === 'Cur'), cla2 = snap.agents.find((a) => a.name === 'Cla');
+  assert(cur2.main && cur2.slot === 8 && !cla2.main && cla2.slot === 0 && snap.mgrSlot === 8, 'main agent / manager desk persisted across restart: ' + snap.agents.map((a) => a.name + ':' + a.slot + (a.main ? '*' : '')).join());
   ws.close(); srv.kill('SIGTERM');
   try { fs.unlinkSync(DATA); } catch (_) {}
 })().catch((e) => { console.error(e); process.exit(1); });

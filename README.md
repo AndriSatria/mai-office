@@ -17,7 +17,7 @@ into a chat panel and a speech bubble over their head.
 
 The office is a 12×12 tile room seen from the south: diamond tile floor (32×16 px tiles), two back walls (windows,
 wall clock, posters, whiteboard, a shelf with a CAFE sign), up to 8 desks in two rows (monitor, keyboard, mug, lamp,
-drawers, chair), plants, and a coffee corner (counter, machine, kettle, mugs, rug).
+drawers, chair), a larger **manager desk** for the main agent, a **round table** with 8 chairs in the open middle, plants, and a coffee corner (counter, machine, kettle, mugs, rug).
 
 * **Projection:** `sx = ox + (x − y)·16`, `sy = oy + (x + y)·8 − z`. +x runs down-right, +y down-left. Everything is
   drawn with `fillRect` / a tiny pixel-exact polygon filler, so edges are crisp and neighbouring faces never leave gaps.
@@ -36,6 +36,42 @@ drawers, chair), plants, and a coffee corner (counter, machine, kettle, mugs, ru
 * **Overlays** (name pill, type badge, tool chip, queued pill, speech bubbles) are drawn at full resolution on top of the
   scaled canvas, anchored to projected points.
 * **Flat view:** `http://localhost:3000/?view=flat` still gives the original top-down renderer (`office-flat.js`); it shows helpers working from their own desks.
+
+## Manager desk, monitors and the round table
+
+![manager desk and round table](screenshots/20-manager-desk-and-round-table.png)
+
+**Main agent = manager desk.** The back-right corner has one bigger walnut desk with a brass MANAGER sign, two screens, a
+leather chair and a rug. The **first agent you hire is the main agent** and sits there (clicking the empty manager desk opens
+the Hire dialog with a note). Everyone else gets a regular desk. Select any other agent and press **★ Make main** to promote
+them: they swap desks with the current main agent (persisted; the selected main agent shows a **★ main** badge). Firing the
+main agent promotes the next one automatically. The manager is also the last person picked as a helper in `/code-review` style jobs.
+
+**Monitors face the person.** Every regular monitor now sits *in front of* the seated person: its screen faces them and
+its **back faces the camera**. The state therefore can't be read off the screen anymore, so it is shown three other ways:
+a glow halo + status LED + light bar on the back of the monitor (violet pulse = thinking, flickering green/cyan = working,
+steady green = done, flashing red = error, dim blue = idle), the same colour washing over the desk top, the keyboard and the
+person's face, and the usual tool chip over the head. The manager sits with their back to the camera between two screens
+that face the manager (and so face the camera), where the screen itself shows the state. Depth sorting is footprint based so the monitor correctly overlaps the person
+where it is in front of them.
+
+![monitors](screenshots/21-monitors-face-the-people.png)
+
+**Round table + plan mode.** The middle of the room has a round table with 8 chairs (a rug, paper pads and a speaker puck).
+When a Claude Code agent goes into **plan mode** the team gathers there:
+
+| Step | What happens |
+| --- | --- |
+| Detect | init event `permissionMode: "plan"` (the agent is run with `--permission-mode plan`), or an `ExitPlanMode` tool call. `/plan <task>` runs a one-shot plan-mode run for any agent type (the Cursor adapter passes `--mode plan`, best effort). |
+| Gather | the plan owner (main or any agent) walks to the table; every **idle / done** colleague (not helping, nothing queued, not selected) walks over and sits. Busy workers and helpers stay at their desks. Coffee and chat trips are suppressed while the team is gathered. Paths avoid furniture. |
+| Planning | a floating plan document in the middle with sparkles, thinking bubbles ("…", "?") over the people, a "planning…" pill and an amber ring on the floor. |
+| Ready | `ExitPlanMode` (or the end of the plan-mode run) turns the document green with a check, shows **✓ PLAN READY** and a summary bubble over the table; the team cheers. After ~6 s everyone walks back to their desk. |
+
+![plan gathering](screenshots/22-plan-mode-gathering.png)
+![plan ready](screenshots/23-plan-ready-summary.png)
+
+Turn plan mode on per agent: the **Permission mode** select in the Hire dialog, or the **📋 Plan** toggle in the chat header
+(sticky for that agent's next runs). In mock mode type `/plan add a dark mode toggle` to see the whole flow.
 
 ## Team collaboration: colleagues help each other
 
@@ -117,9 +153,11 @@ All three types can be mixed in one office - pick the type per agent in the **Hi
 | --- | --- |
 | Select an agent | Click the person (or their desk). Chat panel opens on the right. |
 | Talk to it | Type in the box, **Enter** to send (Shift+Enter = newline). Messages sent while it's busy are queued. |
-| Hire | **＋ Hire agent** (or click an empty desk): name, agent type (Claude Code / Cursor / Mock), working directory. Up to 8 desks. |
+| Hire | **＋ Hire agent** (or click an empty desk): name, agent type (Claude Code / Cursor / Mock), working directory, permission mode (normal / plan). Up to 9 people: 8 desks + the manager desk (the first hire). |
 | Fire | Select an agent, **✖ Fire agent**. |
 | Stop a run | **■ Stop** in the chat panel (kills the CLI process). |
+| Make main | Select an agent, **★ Make main** (swaps desks with the current main agent at the manager desk). |
+| Plan mode | **📋 Plan** toggle in the chat header, or type `/plan <task>` (one-shot). The team gathers at the round table. |
 
 Agent states and what you see:
 
@@ -223,8 +261,8 @@ lib/adapters/index.js     adapter registry, per-type availability, default type
 public/index.html, style.css
 public/js/office-iso.js   isometric renderer (default): projection, furniture, 4-facing characters, depth sort, hit test, pathfinding
 public/js/office-flat.js  the original top-down renderer (`?view=flat`); also supplies shared bubble/icon helpers
-public/js/app.js          WebSocket client, chat panel, wandering logic
-scripts/screenshots.js    Playwright demo: hires, chats, screenshots → screenshots/ (screenshots-hd.js: 3840×2160; team-shots.js: shared /code-review beats)
+public/js/app.js          WebSocket client, chat panel, wandering logic, plan-mode gathering (`updateMeeting`)
+scripts/screenshots.js    Playwright demo: hires, chats, screenshots → screenshots/ (screenshots-hd.js: 3840×2160; team-shots.js: shared /code-review beats, plan-shots.js: manager desk / round table beats)
 scripts/fake-claude.js    fake `claude` binary for adapter testing
 scripts/fake-cursor-agent.js  fake `cursor-agent` binary
 scripts/test-iso.js       Playwright geometry tests: iso hit testing, paths, depth order, mouse (`npm run test:iso`)
@@ -232,7 +270,7 @@ scripts/demo-video.js     records demo/mai-office-demo.mp4 and demo/mai-office-d
 scripts/test-adapters.js  end-to-end test of all agent types + type persistence (`npm run test:adapters`)
 ```
 
-WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`, `relay {from,to,text}`;
+WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`, `relay {from,to,text}`, `promote {id}`, `permission {id,mode:'default'|'plan'}`; `hire` also takes `permissionMode` and `slot`;
 server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `subagent`, `team`, `relay`, `error`.
 
 ## Regenerate screenshots
@@ -244,16 +282,16 @@ npm run screenshots     # uses the fake claude/cursor CLIs so all agent types ap
 
 Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, wandering, coffee break, fire),
 `10-idle-stretch-read-look`, `11`/`11b-idle-chat-at-coffee`, `12-hire-dialog-agent-type`, `13-flat-view-fallback` (`?view=flat`),
-`14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`. (`17-team-huddle` is the synchronized wrap-up; `07-wandering` is the walking agent.)
+`14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`, `20-manager-desk-and-round-table`, `21-monitors-face-the-people` (clip), `22-plan-mode-gathering`, `23-plan-ready-summary`. (`17-team-huddle` is the synchronized wrap-up; `07-wandering` is the walking agent.)
 
 **HD shots:** `npm run screenshots:hd` renders a 1920×1080 viewport at deviceScaleFactor 2 and saves 3840×2160 PNGs to `screenshots/hd/`
-(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`08` team: /code-review with 4 helpers, peer conversation, wrap-up, result handoff). The canvas backing store is in device pixels with an integer
+(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`08` team: /code-review with 4 helpers, peer conversation, wrap-up, result handoff, `09` manager desk + round table, `10` monitors close-up, `11` plan gathering, `12` plan ready + summary). The canvas backing store is in device pixels with an integer
 scale (×7 at DPR 2), so nothing is resampled; the script asserts this before capturing. Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
 
 ## Known limitations / ideas
 
-* Max 8 agents (desk slots); fixed office layout; the isometric camera is fixed (no rotation/zoom); bubbles of different agents can overlap.
-* Claude and Cursor modes are untested with the real CLIs; no tool-permission prompts in headless mode; one process per message.
+* Max 9 agents (8 desks + the manager desk); fixed office layout; the isometric camera is fixed (no rotation/zoom); bubbles of different agents can overlap.
+* Claude and Cursor modes are untested with the real CLIs; plan-mode detection (`permissionMode: plan` in init, `ExitPlanMode` tool use) is only exercised through `scripts/fake-claude.js`, and the Cursor `--mode plan` flag is a guess; no tool-permission prompts in headless mode; one process per message.
 * No auth; no markdown rendering in chat; long transcripts are capped at 300 messages per agent.
 * Next: `/clear`/new-session button, per-agent model & permission settings,
-  markdown/diff rendering, sound, day/night cycle, a meeting room for multi-agent tasks.
+  markdown/diff rendering, sound, day/night cycle.

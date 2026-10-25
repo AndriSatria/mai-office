@@ -17,6 +17,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const teamShots = require('./team-shots');
+const planShots = require('./plan-shots');
 
 (async () => {
   const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, PORT, HARNESS_MODE: 'mock', HARNESS_DATA: DATA, HARNESS_DEFAULT_CWD: ROOT,
@@ -97,6 +98,13 @@ const teamShots = require('./team-shots');
     await idle();
     await teamShots(page, 'Ada', { mid: () => shot('05-team-code-review-4-helpers-hd.png'), peer: () => shot('06-team-peer-conversation-hd.png'),
       handoff: () => shot('08-team-result-handoff-hd.png'), huddle: () => shot('07-team-huddle-hd.png') }, sleep);
+
+    // 9-12) manager desk + round table overview, monitors facing the people (close-up), plan mode gathering, plan ready + summary bubble
+    await page.evaluate(() => window.harness.select(null));
+    await idle();
+    await planShots(page, 'Ken', { overview: () => shot('09-manager-desk-and-round-table-hd.png'),
+      monitors: async (clip) => { await page.screenshot({ path: path.join(OUT, '10-monitors-face-the-people-hd.png'), clip }); console.log('saved 10-monitors-face-the-people-hd.png'); },
+      gather: () => shot('11-plan-mode-gathering-hd.png'), ready: () => shot('12-plan-ready-summary-hd.png') }, sleep, ROOT);
   } finally {
     await browser.close(); srv.kill('SIGTERM');
     try { fs.unlinkSync(DATA); } catch (_) {}

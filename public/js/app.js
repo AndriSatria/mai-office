@@ -42,8 +42,15 @@
     a.nextAct = performance.now() + (WANDER_FAST ? rand(1500, 3500) : rand(5000, 14000));
     a.act = null; a.partner = null;
     a.bubble = a.bubble || null; a.bubbleAt = a.bubbleAt || 0;
-    a.help = null; a.pendingHelp = null; a.huddle = null; a.planAt = 0; a.rcv = null; a.turn = null; a.subs = a.subs || []; a.team = a.team || [];
+    a.meetSeat = -1; a.joinAt = 0; a.leaveAt = 0; a.help = null; a.pendingHelp = null; a.huddle = null; a.planAt = 0; a.rcv = null; a.turn = null; a.subs = a.subs || []; a.team = a.team || [];
     return a;
+  }
+
+  /** promoted to / moved off the manager desk (or any slot change): snap to the new chair, nothing is left walking from the old desk */
+  function slotMoved(a, oldSlot) {
+    if (oldSlot === undefined || oldSlot === a.slot) return;
+    a.away = false; a.mode = 'sit'; a.pts = null; a.act = null; a.turn = null; a.partner = null; a.dest = null; a.meetSeat = -1; a.joinAt = 0;
+    a.chatStart = 0;
   }
 
   function onServer(m) {
@@ -54,8 +61,9 @@
         const seen = new Set();
         for (const a of m.agents) {
           seen.add(a.id);
-          const old = agents.get(a.id);
+          const old = agents.get(a.id), oldSlot = old && old.slot;
           const na = old ? Object.assign(old, a) : decorate(a);
+          if (old) slotMoved(na, oldSlot);
           agents.set(a.id, na); syncHelp(na, true);
         }
         for (const id of [...agents.keys()]) if (!seen.has(id)) agents.delete(id);
@@ -71,8 +79,8 @@
           if (isNew && pendingSelect && !m.enter) { select(a.id); pendingSelect = false; }
           syncHelp(a, false, !!m.enter);
         } else {
-          const prev = a.state;
-          Object.assign(a, agent);
+          const prev = a.state, prevSlot = a.slot;
+          Object.assign(a, agent); slotMoved(a, prevSlot);
           if (prev !== a.state && a.state === 'thinking') a.bubble = null;
           syncHelp(a, false);
         }
@@ -160,6 +168,10 @@
     $('stopBtn').hidden = !(a.state === 'thinking' || a.state === 'working');
     $('queueInfo').textContent = a.queued ? `${a.queued} message(s) queued${a.helping ? ` until the helper job ends` : ''}` : (a.helping ? `helping ${a.helping.parentName}: new messages wait` : a.hasSession ? 'session active' : '');
     $('teamBtn').hidden = a.type !== 'mock';
+    $('mainBadge').hidden = !a.main; $('mainBtn').hidden = !!a.main;
+    const pm = a.permissionMode === 'plan';
+    $('planBtn').classList.toggle('on', pm); $('planBtn').setAttribute('aria-pressed', pm ? 'true' : 'false'); $('planBtn').title = pm ? 'Plan mode is ON for ' + a.name + ': they gather at the round table to plan first. Click to turn off.' : 'Plan mode: ' + a.name + ' plans first and everybody gathers at the round table. (Or type /plan <task> for one run.)';
+    $('planBtn').textContent = pm ? '📋 Plan: on' : '📋 Plan';
     const rt = $('relayTo'), others = [...agents.values()].filter((b) => b.id !== a.id), sig = a.id + '|' + others.map((b) => b.id + b.name).join(',');
     if (rt.dataset.sig !== sig) {
       rt.dataset.sig = sig; rt.innerHTML = '<option value="">this agent</option>';
@@ -223,6 +235,8 @@
   $('input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); }
   });
+  $('planBtn').addEventListener('click', () => { const a = agents.get(selectedId); if (a) send({ type: 'permission', id: a.id, mode: a.permissionMode === 'plan' ? 'default' : 'plan' }); });
+  $('mainBtn').addEventListener('click', () => { const a = agents.get(selectedId); if (a && !a.main) send({ type: 'promote', id: a.id }); });
   $('stopBtn').addEventListener('click', () => selectedId && send({ type: 'interrupt', id: selectedId }));
 
   // ---------- team activity feed (per lead) ----------
@@ -259,18 +273,21 @@
       box.appendChild(l);
     }
   }
-  function openHire() {
-    renderTypeOptions();
+  let hireSlot;
+  function openHire(slot) {
+    hireSlot = typeof slot === 'number' ? slot : undefined;
+    renderTypeOptions(); $('hirePerm').value = 'default';
+    const first = agents.size === 0; $('hireNote').textContent = first ? 'The first person you hire sits at the manager desk and becomes the main agent.' : '';
     const used = new Set([...agents.values()].map((a) => a.name.toLowerCase()));
     $('hireName').value = NAMES.find((n) => !used.has(n.toLowerCase())) || '';
     $('hireCwd').value = defaultCwd;
     $('hireDlg').showModal(); $('hireName').select();
   }
-  $('hireBtn').addEventListener('click', openHire);
+  $('hireBtn').addEventListener('click', () => openHire());
   $('hireCancel').addEventListener('click', () => $('hireDlg').close());
   $('hireForm').addEventListener('submit', () => {
     const sel = document.querySelector('input[name=agentType]:checked');
-    send({ type: 'hire', name: $('hireName').value, cwd: $('hireCwd').value, agentType: sel ? sel.value : undefined }); pendingSelect = true;
+    send({ type: 'hire', name: $('hireName').value, cwd: $('hireCwd').value, agentType: sel ? sel.value : undefined, permissionMode: $('hirePerm').value, slot: hireSlot }); pendingSelect = true;
   });
   $('fireBtn').addEventListener('click', () => {
     const a = agents.get(selectedId); if (!a) return;
@@ -304,12 +321,13 @@
         if (pe) {
           const beat = Math.floor((now - h.peer.t0) / (1100 * TS));
           if (beat % 2 === h.peer.side) htalk = ({ '?': 2, '!': 1, '...': 0 })[['?', '!', '...'][(h.peer.g + Math.floor(beat / 2)) % 3]];
-          htalkDir = (pe.slot >> 2) !== (a.slot >> 2) ? ((pe.slot >> 2) > (a.slot >> 2) ? 1 : -1) : ((pe.slot & 3) >= (a.slot & 3) ? 1 : -1);
+          const ra = Office.SLOTS[a.slot], rp = Office.SLOTS[pe.slot];
+          htalkDir = rp.row !== ra.row ? (rp.row > ra.row ? 1 : -1) : (rp.col >= ra.col ? 1 : -1);
         }
         helpV = { role: h.role, label: h.label, tool: h.tool, phase: h.phase, pose, parentId: h.parentId, parentName: h.parentName, desk, say: h.say && now < h.sayUntil ? h.say : null,
           peerWith: pe ? pe.id : null, celebrate: desk && h.phase !== 'work' && !!(h.cheerUntil && now < h.cheerUntil) ? (now - (h.cheerUntil - 3400 * TS)) / 1000 : null };
       }
-      return { id: a.id, name: a.name, type: a.type, slot: a.slot, look: a.look, state, tool, queued: a.queued,
+      return { id: a.id, name: a.name, type: a.type, slot: a.slot, look: a.look, state, tool, queued: a.queued, main: !!a.main, meet: a.away && a.mode === 'meet',
         phase: a.phase, away: a.away, x: a.x, y: a.y, face: a.face || 0, mode: a.mode, bubble,
         act: a.act ? a.act.kind : null, actP: a.act ? (now - a.act.t0) / 1000 : 0,
         talk: htalk != null ? htalk : talk, talkDir: htalk != null ? htalkDir : (a.chatSide === 0 ? 1 : -1),
@@ -320,6 +338,7 @@
         rcv: a.rcv ? { age: (now - a.rcv.t0) / 1000, ok: a.rcv.ok } : null };
     });
   }
+  const planView = () => { const o = planOwner(); return o ? { state: o.plan.state, summary: o.plan.summary || '', ownerId: o.id } : null; };
   const flightsView = (now) => flights.map((f) => ({ kind: f.kind, pid: f.pid, hid: f.hid, toId: f.toId, ok: f.ok, p: (now - f.t0) / f.dur }));
 
   // ---------- helpers (subagents) = EXISTING colleagues, working at THEIR OWN desks ----------
@@ -446,7 +465,7 @@
   canvas.addEventListener('click', (ev) => {
     const [x, y] = toLogical(ev); const h = Office.hitTest(x, y, entries());
     if (!h) { return; }
-    if (h.id) select(h.id); else if (agents.size < Office.MAX_SLOTS) openHire();
+    if (h.id) select(h.id); else if (agents.size < Office.MAX_SLOTS) openHire(h.slot);
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('hireDlg').open && document.activeElement !== $('input')) select(null); });
 
@@ -455,9 +474,19 @@
   // sip coffee, or meet another idle agent by the coffee machine for a chat. Anything non-idle sends them home.
   const SPEED = Office.SPEED;     // world units per second (px in the flat view, tiles in the iso view)
   const faceOf = (dx, dy) => (Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3)); // 0 SE 1 SW 2 NW 3 NE
-  const wantsHome = (a) => !!a.help || (a.state !== 'idle' && a.state !== 'done') || a.id === selectedId;
+  // ---------- plan mode: everybody who is free gathers at the round table ----------
+  // The agent in plan mode (a.plan from the server) walks to the table; idle colleagues (not helping, nothing queued, not being chatted with) join
+  // and sit on the stools. Busy people stay at their desks. When the plan is done and the hold time is over, they all walk back.
+  const planOwner = () => { for (const a of agents.values()) if (a.plan) return a; return null; };
+  const meetingFor = (a) => a.meetSeat >= 0 && !!planOwner();
+  const busy = (a) => a.state !== 'idle' && a.state !== 'done';
+  const joinable = (a, o) => !a.away && a.mode === 'sit' && !a.act && !a.help && !a.pendingHelp && !a.helping && !a.queued && !busy(a) && a.id !== selectedId && a !== o;
+  const wantsHome = (a) => {
+    if (a.away && a.dest === 'meet') { const o = planOwner(); return !meetingFor(a) || (a !== o && (busy(a) || !!a.help || !!a.helping || a.id === selectedId)); }
+    return !!a.help || busy(a) || a.id === selectedId || !!planOwner();
+  };
   const socialBusy = () => { for (const a of agents.values()) if (a.away) return true; return false; };
-  const canStart = (a) => !a.away && !a.act && !a.help && !a.pendingHelp && !a.helping && a.state === 'idle' && a.id !== selectedId;
+  const canStart = (a) => !a.away && !a.act && !a.help && !a.pendingHelp && !a.helping && a.state === 'idle' && a.id !== selectedId && !planOwner();
   const endAct = (a, now) => { a.act = null; a.nextAct = now + (WANDER_FAST ? rand(2000, 4000) : rand(8000, 22000)); };
 
   function startWalk(a, spot, dest) {
@@ -484,9 +513,29 @@
     for (const [k, w] of opts) { if ((r -= w) < 0) { kind = k; break; } }
     startActivity(a, kind, kind === 'chat' ? mates[Math.floor(Math.random() * mates.length)] : null);
   }
-  function leave(a) { a.mode = 'walk'; a.dir = -1; a.target = a.pts.length - 2; a.partner = null; a.chatStart = 0; }
+  function leave(a) { a.mode = 'walk'; a.dir = -1; a.target = a.pts.length - 2; a.partner = null; a.chatStart = 0; a.meetSeat = -1; }
+  /** seat assignment + walking to the round table (called every frame while some agent is in plan mode) */
+  function updateMeeting(now) {
+    const o = planOwner(), seats = Office.SEATS;
+    if (!o || !seats) { for (const a of agents.values()) a.joinAt = 0; return; }
+    const used = new Set(); for (const a of agents.values()) if (a.meetSeat >= 0) used.add(a.meetSeat);
+    const sit = (a, pref) => {
+      let k = pref !== undefined && !used.has(pref) ? pref : -1;
+      if (k < 0) for (let i = 0; i < seats.length; i++) if (!used.has(i)) { k = i; break; }
+      if (k < 0) return;
+      used.add(k); a.meetSeat = k; a.act = null; a.turn = null; a.joinAt = 0;
+      startWalk(a, { x: seats[k].x, y: seats[k].y, face: seats[k].face }, 'meet');
+    };
+    if (!o.away && o.mode === 'sit' && o.meetSeat < 0) sit(o, 1);
+    const list = [...agents.values()].filter((a) => a !== o && a.meetSeat < 0 && joinable(a, o)).sort((p, q) => (q.slot === Office.MGR) - (p.slot === Office.MGR) || p.slot - q.slot);
+    for (const a of list) {
+      if (!a.joinAt) a.joinAt = now + rand(250, 1500) * TS;
+      if (now >= a.joinAt) sit(a);
+    }
+  }
 
   function stepWalker(a, dt, now) {
+    if (a.mode === 'meet') { if (wantsHome(a)) { if (!a.leaveAt) a.leaveAt = now + rand(0, 900) * TS; if (now >= a.leaveAt) { a.leaveAt = 0; leave(a); } } return; }
     if (a.mode === 'drink') { if (now > a.drinkUntil || wantsHome(a)) leave(a); return; }
     if (a.mode === 'chat') {
       const p = agents.get(a.partner);
@@ -495,7 +544,7 @@
       if (!p || !p.away || p.partner !== a.id || wantsHome(a) || (a.chatStart && now > a.until) || (!a.chatStart && now - a.waitSince > 25000)) leave(a);
       return;
     }
-    if (wantsHome(a) && a.dir === 1) { a.dir = -1; a.target = a.idx; a.partner = null; }
+    if (wantsHome(a) && a.dir === 1) { a.dir = -1; a.target = a.idx; a.partner = null; a.meetSeat = -1; }
     const p = a.pts[a.target]; const dx = p.x - a.x, dy = p.y - a.y, d = Math.hypot(dx, dy);
     const stepLen = SPEED * dt / TS;
     if (d <= stepLen) {
@@ -503,17 +552,19 @@
       if (a.dir === 1) {
         if (a.target === a.pts.length - 1) {
           if (a.spot && a.spot.face !== undefined) a.face = a.spot.face;
-          if (a.dest === 'drink') { a.mode = 'drink'; a.drinkUntil = now + (WANDER_FAST ? 4000 : rand(5000, 10000)) * TS; }
+          if (a.dest === 'meet') { a.mode = 'meet'; a.meetSince = now; }
+          else if (a.dest === 'drink') { a.mode = 'drink'; a.drinkUntil = now + (WANDER_FAST ? 4000 : rand(5000, 10000)) * TS; }
           else { a.mode = 'chat'; a.waitSince = now; }
         } else a.target++;
-      } else if (a.target === 0) { a.away = false; a.mode = 'sit'; a.partner = null; if (a.help && a.help.phase === 'go') arriveHelp(a, now); else endAct(a, now); }
+      } else if (a.target === 0) { a.away = false; a.mode = 'sit'; a.partner = null; a.meetSeat = -1; a.dest = null; if (a.help && a.help.phase === 'go') arriveHelp(a, now); else endAct(a, now); }
       else a.target--;
     } else { a.x += (dx / d) * stepLen; a.y += (dy / d) * stepLen; a.face = faceOf(dx, dy); }
   }
   function update(dt, now) {
+    updateMeeting(now);
     for (const a of agents.values()) {
       if (a.away) { stepWalker(a, dt, now); continue; }
-      if (a.act && (a.state !== 'idle' || a.id === selectedId || now > a.act.until)) endAct(a, now);
+      if (a.act && (a.state !== 'idle' || a.id === selectedId || now > a.act.until || planOwner())) endAct(a, now);
       if (WANDER && canStart(a) && now > a.nextAct) {
         if (a.id === hoverId) a.nextAct = now + 3000; else pickActivity(a);
       }
@@ -535,14 +586,15 @@
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     update(dt, now); updateHelp(now);
-    Office.render(canvas, S, U, { slow: TS, t: now / 1000, entries: entries(), selectedId, hoverId, hoverSlot, flights: flightsView(now) });
+    Office.render(canvas, S, U, { slow: TS, t: now / 1000, entries: entries(), selectedId, hoverId, hoverSlot, flights: flightsView(now), plan: planView(now) });
     requestAnimationFrame(frame);
   }
 
   // handy for tests / debugging in the console
   window.harness = {
     agents, select, send, view: VIEW, get selected() { return selectedId; }, get hover() { return { id: hoverId, slot: hoverSlot }; },
-    states: () => [...agents.values()].map((a) => ({ id: a.id, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind, subs: (a.subs || []).length, helping: a.help ? a.help.phase : null, home: !a.away, seated: !a.away && a.mode === 'sit' })),
+    plan: () => { const o = planOwner(); return { owner: o ? o.id : null, state: o ? o.plan.state : null, summary: o ? o.plan.summary : null, seated: [...agents.values()].filter((a) => a.away && a.mode === 'meet').map((a) => a.id), walking: [...agents.values()].filter((a) => a.away && a.dest === 'meet' && a.mode === 'walk').map((a) => a.id) }; },
+    states: () => [...agents.values()].map((a) => ({ id: a.id, main: !!a.main, slot: a.slot, meet: a.away && a.mode === 'meet', dest: a.dest, name: a.name, type: a.type, state: a.state, tool: a.tool, away: a.away, mode: a.mode, act: a.act && a.act.kind, subs: (a.subs || []).length, helping: a.help ? a.help.phase : null, home: !a.away, seated: !a.away && a.mode === 'sit' })),
     help: (id) => { const a = agents.get(id); return a && a.help ? { phase: a.help.phase, parentId: a.help.parentId, role: a.help.role, label: a.help.label, tool: a.help.tool, say: a.help.say, x: a.x, y: a.y, mode: a.mode, away: a.away, seated: !a.away && a.mode === 'sit', peer: !!a.help.peer, tile: Math.floor(a.x) + ',' + Math.floor(a.y) } : null; },
     team: (id) => { const a = agents.get(id); return a ? a.team.slice() : []; },
     huddle: (id) => { const a = agents.get(id); return !!(a && a.huddle && performance.now() < a.huddle.until); },

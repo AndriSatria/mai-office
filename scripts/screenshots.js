@@ -17,6 +17,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const teamShots = require('./team-shots');
+const planShots = require('./plan-shots');
 
 (async () => {
   // claude/cursor agents use the stand-in CLIs in scripts/ so every agent type can be demoed without installs
@@ -132,6 +133,11 @@ const teamShots = require('./team-shots');
     await shot('11-idle-chat-at-coffee.png');
     await sleep(1700);
     await shot('11b-idle-chat-reply.png');
+    // Manager desk + round table: overview, monitors facing the people, plan mode gathering, plan ready
+    await page.evaluate(() => window.harness.select(null));
+    await planShots(page, 'Ken', { overview: () => shot('20-manager-desk-and-round-table.png'),
+      monitors: async (clip) => { await page.screenshot({ path: path.join(OUT, '21-monitors-face-the-people.png'), clip }); console.log('saved 21-monitors-face-the-people.png'); },
+      gather: () => shot('22-plan-mode-gathering.png'), ready: () => shot('23-plan-ready-summary.png') }, sleep, ROOT);
     // The old top-down view is still available with ?view=flat
     const flat = await browser.newPage({ viewport: { width: 1600, height: 900 } });
     await flat.goto(`http://localhost:${PORT}/?wander=off&view=flat`);

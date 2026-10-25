@@ -31,8 +31,8 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
       for (let i = 0; i < O.MAX_SLOTS; i++) { const [x, y] = O.deskPoint(i); const h = O.hitTest(x, y, []); out.empty.push(h && h.slot === i); }
       out.outside = O.hitTest(5, 5, []);
       // all 8 desks occupied: the person (head) and the desk top each resolve to that agent
-      const all = Array.from({ length: 8 }, (_, i) => mk(i));
-      for (let i = 0; i < 8; i++) {
+      const all = Array.from({ length: 9 }, (_, i) => mk(i));
+      for (let i = 0; i < 9; i++) {
         const s = O.SLOTS[i], [px, py] = O.project(s.seat.x, s.seat.y, 8 + 14);
         const head = O.hitTest(px, py, all), [dx, dy] = O.deskPoint(i), desk = O.hitTest(dx, dy, all);
         out.seated.push(head && head.id === 'a' + i && desk && desk.id === 'a' + i);
@@ -40,19 +40,19 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
       // a walker standing right in front of desk 1 is drawn on top of it and must win the hit test
       const s1 = O.SLOTS[1], wx = s1.dx + 1.5, wy = s1.dy + 1.1;
       const walker = { id: 'w', slot: 7, away: true, x: wx, y: wy, face: 1 };
-      const list = all.slice(0, 7).concat([walker]);
+      const list = all.slice(0, 7).concat([walker, all[8]]);
       const [fx, fy] = O.project(wx, wy, 14);
       out.front = O.hitTest(fx, fy, list);
       // the same pixel with the walker standing far behind the desk must hit the desk instead
       const back = { id: 'w', slot: 7, away: true, x: s1.dx - 0.5 - 1, y: 5.5, face: 0 };
-      out.behind = O.hitTest(fx, fy, all.slice(0, 7).concat([back]));
+      out.behind = O.hitTest(fx, fy, all.slice(0, 7).concat([back, all[8]]));
       // chair hits belong to that slot's agent
       const [cx, cy] = O.project(s1.dx - 0.5, s1.dy + 1.0, 4); out.chair = O.hitTest(cx, cy, all);
       return out;
     });
-    assert(r.empty.every(Boolean), 'empty desks are hittable at their projected desk tops (8/8)');
+    assert(r.empty.every(Boolean), 'empty desks are hittable at their projected desk tops (8 desks + the manager desk, 9/9)');
     assert(r.outside === null, 'floor outside any object is not a hit');
-    assert(r.seated.every(Boolean), 'seated agents + their desks resolve to the right agent (8/8)');
+    assert(r.seated.every(Boolean), 'seated agents + their desks resolve to the right agent (9/9, manager desk included)');
     assert(r.front && r.front.id === 'w', 'a walker in front of a desk is picked before the desk (front-most first)');
     assert(r.behind && r.behind.id === 'a1', 'the desk is picked when the walker is behind it');
     assert(r.chair && r.chair.id === 'a1', 'chair hit resolves to the seated agent');
@@ -90,17 +90,37 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
       }
       return { n, bad: bad.slice(0, 5), axis, own, other, miss: (window.__miss || []).slice(0, 12) };
     });
-    assert(p.n === 8 * 3 && p.bad.length === 0, `${p.n} paths (8 desks x coffee/chat spots) never touch blocked tiles ${p.bad.length ? JSON.stringify(p.bad) : ''}`);
+    assert(p.n === 9 * 3 && p.bad.length === 0, `${p.n} paths (9 desks x coffee/chat spots) never touch blocked tiles ${p.bad.length ? JSON.stringify(p.bad) : ''}`);
     if (p.miss.length) console.log('  misses:', JSON.stringify(p.miss));
     assert(p.axis, 'path segments follow the tile grid (axis aligned)');
     assert(p.own / (p.own + p.other) > 0.97, `walker torso is the front-most hit along paths (${p.own}/${p.own + p.other})`);
 
     // ---- real mouse through the canvas ----
-    for (const n of ['Ada', 'Linus']) { await page.evaluate((n) => window.harness.send({ type: 'hire', name: n, cwd: '/tmp' }), n); await sleep(250); }
+    // ---- manager desk: hit-test + hire through the dialog; the first hire is the main agent ----
+    const mbox0 = await page.locator('#office').boundingBox();
+    const [mdx, mdy] = await page.evaluate(([box]) => { const O = window.Office; const [x, y] = O.deskPoint(O.MGR); return [box.x + (x / O.W) * box.width, box.y + (y / O.H) * box.height]; }, [mbox0]);
+    await page.mouse.move(mdx, mdy); await sleep(150);
+    assert((await page.evaluate(() => window.harness.hover.slot)) === 8, 'hovering the (empty) manager desk targets slot 8');
+    await page.mouse.click(mdx, mdy); await sleep(200);
+    assert(await page.evaluate(() => document.getElementById('hireDlg').open && /main/i.test(document.getElementById('hireNote').textContent)), 'clicking the manager desk opens the hire dialog with the "main agent" note');
+    await page.fill('#hireName', 'Ada'); await page.click('#hireOk'); await sleep(500);
+    const ada0 = await page.evaluate(() => { const a = [...window.harness.agents.values()].find((x) => x.name === 'Ada'); return a && { slot: a.slot, main: a.main }; });
+    assert(ada0 && ada0.slot === 8 && ada0.main === true, 'hiring at the manager desk makes the first agent main (slot 8)');
+    await page.evaluate(() => window.harness.send({ type: 'hire', name: 'Linus', cwd: '/tmp' })); await sleep(300);
+    const lin = await page.evaluate(() => { const a = [...window.harness.agents.values()].find((x) => x.name === 'Linus'); return { slot: a.slot, main: a.main }; });
+    assert(lin.slot === 0 && !lin.main, 'the next hire takes a regular desk (slot 0), not the manager desk');
     await sleep(500);
+    // the manager at the desk resolves from head, desk and chair-back hits
+    const mh = await page.evaluate(() => {
+      const O = window.Office, mgr = { id: 'm', slot: 8, away: false, x: 0, y: 0, main: true }, out = {};
+      const [hx, hy] = O.project(O.SLOTS[8].seat.x, O.SLOTS[8].seat.y, 8 + 14), [dx, dy] = O.deskPoint(8);
+      out.head = O.hitTest(hx, hy, [mgr]); out.desk = O.hitTest(dx, dy, [mgr]);
+      return { head: out.head && out.head.id, desk: out.desk && out.desk.id };
+    });
+    assert(mh.head === 'm' && mh.desk === 'm', 'manager: head and desk both resolve to the main agent');
     const box = await page.locator('#office').boundingBox();
     const toPage = async (fn) => page.evaluate(([fn, box]) => { const O = window.Office; const [x, y] = eval(fn); return [box.x + (x / O.W) * box.width, box.y + (y / O.H) * box.height]; }, [fn, box]);
-    const [hx, hy] = await toPage('O.project(O.SLOTS[1].seat.x, O.SLOTS[1].seat.y, 20)');
+    const [hx, hy] = await toPage('O.project(O.SLOTS[0].seat.x, O.SLOTS[0].seat.y, 20)');
     await page.mouse.move(hx, hy); await sleep(150);
     const hov = await page.evaluate(() => window.harness.hover);
     const cursor = await page.evaluate(() => document.getElementById('office').style.cursor);
@@ -119,7 +139,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     // ---- desk-to-desk routes for the dotted lines / flying papers never cross furniture ----
     const rt = await page.evaluate(() => {
       const O = window.Office, bad = [], offs = [-0.2, -0.1, 0, 0.1, 0.2, 0.32]; let n = 0;
-      for (let a = 0; a < 8; a++) for (let b = 0; b < 8; b++) if (a !== b) for (const off of offs) {
+      for (let a = 0; a < 9; a++) for (let b = 0; b < 9; b++) if (a !== b) for (const off of offs) {
         const pts = O.deskRoute(a, b, off); n++;
         for (let i = 1; i < pts.length; i++) {
           const p = pts[i - 1], q = pts[i], N = Math.max(2, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) * 8));
@@ -128,7 +148,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
       }
       return { n, bad: bad.slice(0, 3), nbad: bad.length };
     });
-    assert(rt.nbad === 0, `all ${rt.n} desk-to-desk dotted routes (every pair, every lane) stay on free floor ${JSON.stringify(rt.bad)}`);
+    assert(rt.nbad === 0, `all ${rt.n} desk-to-desk dotted routes (9 desks, every pair, every lane) stay on free floor ${JSON.stringify(rt.bad)}`);
 
     // ---- live /code-review: helpers work at THEIR OWN desks, papers fly along dotted lines, wrap-up at each desk ----
     for (const n of ['Grace', 'Alan']) { await page.evaluate((n) => window.harness.send({ type: 'hire', name: n, cwd: '/tmp' }), n); await sleep(250); }
@@ -198,6 +218,53 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     await page.waitForFunction(() => [...window.harness.agents.values()].find((a) => a.name === 'Linus').transcript.some((m) => m.role === 'user' && m.text === '[from Ada] please look at my diff'), null, { timeout: 5000 });
     assert(true, 'target agent receives "[from Ada] …" as input');
     assert(await page.evaluate(() => document.getElementById('relayTo').value === ''), 'send-to select resets to "this agent" after sending');
+
+    // ---- plan mode: the plan owner walks to the round table, idle colleagues join, busy ones stay, then everybody walks home ----
+    await page.waitForFunction(() => window.harness.states().every((a) => a.home && !a.helping && a.state !== 'working' && a.state !== 'thinking'), null, { timeout: 40000 });
+    const geo = await page.evaluate(() => { const O = window.Office; return { seats: O.SEATS.length, tb: O.tablePoint ? 1 : 0 }; });
+    assert(geo.seats >= 6 && geo.seats <= 8, `round table has ${geo.seats} chairs`);
+    const ids0 = await page.evaluate(() => Object.fromEntries([...window.harness.agents.values()].map((a) => [a.name, a.id])));
+    const total = Object.keys(ids0).length;
+    await page.evaluate((id) => window.harness.select(id), ids0.Grace);
+    await page.evaluate((id) => window.harness.send({ type: 'send', id, text: 'refactor everything slowly' }), ids0.Linus);   // Linus is busy -> stays at his desk
+    await sleep(500);
+    await page.fill('#input', '/plan add a dark mode toggle'); await page.press('#input', 'Enter');
+    await page.waitForFunction(() => window.harness.plan().state === 'planning', null, { timeout: 10000 });
+    assert(true, 'mock "/plan <task>" puts the agent into plan mode (planning)');
+    const want = Math.min(total - 1, 8);
+    let sawDrink = false, sawChat = false, linusSeated = false;
+    const t0 = Date.now(); let pl;
+    for (;;) {
+      pl = await page.evaluate(() => ({ p: window.harness.plan(), st: window.harness.states() }));
+      sawDrink = sawDrink || pl.st.some((a) => a.mode === 'drink'); sawChat = sawChat || pl.st.some((a) => a.mode === 'chat');
+      linusSeated = linusSeated || pl.p.seated.includes(ids0.Linus);
+      if (pl.p.seated.length >= want || Date.now() - t0 > 30000 || pl.p.state === null) break;
+      await sleep(100);
+    }
+    const lstate = pl.st.find((a) => a.name === 'Linus');
+    assert(pl.p.seated.includes(ids0.Grace) && pl.p.owner === ids0.Grace, 'the plan owner sits at the round table');
+    assert(pl.p.seated.length >= want, `idle colleagues gathered at the table (${pl.p.seated.length} seated of ${total} people, Linus busy)`);
+    assert(!linusSeated && (lstate.home || lstate.state === 'done' || lstate.state === 'idle') && !pl.p.seated.includes(ids0.Linus), 'a working colleague stays at his desk');
+    assert(!sawDrink && !sawChat, 'no coffee / chat walks while the team is gathered');
+    const seatSet = new Set(await page.evaluate(() => window.harness.states().filter((a) => a.meet).map((a) => a.slot)));
+    assert(seatSet.size === pl.p.seated.length, 'every person at the table is in a different chair');
+    await page.waitForFunction(() => window.harness.plan().state === 'ready', null, { timeout: 40000 });
+    const rdy = await page.evaluate(() => window.harness.plan());
+    assert(rdy.summary && rdy.summary.length > 10 && rdy.seated.length >= want - 1, 'plan ready: summary shown over the table, the team is still seated: ' + rdy.summary);
+    await page.waitForFunction(() => window.harness.plan().state === null && window.harness.states().every((a) => a.home), null, { timeout: 60000 });
+    assert(true, 'after the plan is approved everybody walks back to their own desk');
+    const back = await page.evaluate(() => window.harness.states().every((a) => a.home && a.seated));
+    assert(back, 'all people are seated at their desks again');
+
+    // ---- promote through the UI: swap desks with the current main ----
+    await page.evaluate((id) => window.harness.select(id), ids0.Grace);
+    assert(await page.evaluate(() => !document.getElementById('mainBtn').hidden), 'a non-main agent shows the "Make main" button');
+    const gs = await page.evaluate((id) => window.harness.states().find((a) => a.id === id).slot, ids0.Grace);
+    await page.click('#mainBtn'); await sleep(600);
+    const sw = await page.evaluate((ids) => ({ g: window.harness.states().find((a) => a.id === ids.Grace), a: window.harness.states().find((a) => a.id === ids.Ada) }), ids0);
+    assert(sw.g.main && sw.g.slot === 8 && !sw.a.main && sw.a.slot === gs && sw.g.home && sw.a.home, `Make main: Grace -> manager desk, Ada -> desk ${gs}`);
+    assert(await page.evaluate(() => document.getElementById('mainBtn').hidden && !document.getElementById('mainBadge').hidden), 'the main agent shows the ★ main badge instead of the button');
+
     // integer pixel scale
     const sc = await page.evaluate(() => { const c = document.getElementById('office'); return [c.width / window.Office.W, c.height / window.Office.H]; });
     assert(Number.isInteger(sc[0]) && sc[0] === sc[1], `canvas is scaled by an integer factor (x${sc[0]})`);

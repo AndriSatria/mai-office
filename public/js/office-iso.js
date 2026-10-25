@@ -14,21 +14,38 @@
   const { R, shade, rnd, disc, line, stateIcon, drawTalk, pillText, measurePill, drawBubble, TYPE_BADGE, STATE_COL } = F.shared;
 
   const W = 400, H = 264, OX = 200, OY = 62, GX = 12, GY = 12, WH = 56;
-  const SEAT = 8, DESKZ = 13, MAX_SLOTS = 8, SPEED = 2.6; // SPEED in tiles/second
+  const SEAT = 8, DESKZ = 13, MAX_SLOTS = 9, MGR = 8, SPEED = 2.6; // SPEED in tiles/second; slot 8 = the manager desk (main agent)
+  const AISLE = 3.55, FRONT1 = 6.55;      // desk-to-desk dotted lanes: the aisle between the rows / the strip in front of row 1
   const sx = (x, y) => OX + Math.round((x - y) * 16);
   const sy = (x, y, z) => OY + Math.round((x + y) * 8) - (z || 0);
   const A = (x, y, z) => [sx(x, y), sy(x, y, z)];
   const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 
   // ---------- layout ----------
-  // 8 desks: two rows (x) of four (y). Chair on the -x side, desk 1x2 tiles, character faces +x (SE).
+  // 8 regular desks: two rows (x) of four (y). Chair on the -x side, desk 1x2 tiles, the character faces +x (SE) and the monitor stands
+  // in front of them on the desk (its back to the camera; the screen faces the person).
+  // Slot 8 = the MANAGER desk (main agent): a bigger desk against the back wall, the manager sits with their back to the camera
+  // (facing NE) so the two monitors face the camera AND the manager.
+  // Per slot: seat (chair position), start (tiles the person steps onto when leaving), pad/gapY (dotted-lane anchors), ring (selection rect), lab (name pill).
   const SLOTS = [];
-  for (let i = 0; i < MAX_SLOTS; i++) {
+  for (let i = 0; i < 8; i++) {
     const row = i >> 2, col = i & 3, dx = row ? 5 : 2, dy = 1 + 3 * col;
-    SLOTS.push({ i, row, col, dx, dy, seat: { x: dx - 0.5, y: dy + 1 } });
+    SLOTS.push({ i, row, col, dx, dy, seat: { x: dx - 0.5, y: dy + 1 }, start: [[dx - 1, dy], [dx - 1, dy + 1]],
+      px: row ? FRONT1 : AISLE, py: dy + 1, gapY: col < 3 ? dy + 2.5 : dy - 0.5,
+      ring: { x0: Math.max(dx - 1.15, 0.15), y0: Math.max(dy - 0.2, 0.15), x1: Math.min(dx + 1.3, GX - 0.15), y1: Math.min(dy + 2.2, GY - 0.15) },
+      lab: { x: dx - 0.45, y: dy + 1.75 }, desk: { x: dx + 0.5, y: dy + 1 } });
   }
-  const COUNTER = { x0: 8, y0: 0, x1: 12, y1: 1 };
-  const PLANTS = [{ x: 0, y: 0 }, { x: 7, y: 0 }, { x: 11, y: 5 }, { x: 11, y: 11 }, { x: 0, y: 11 }, { x: 7, y: 11 }];
+  const MD = { x0: 6.1, x1: 9.0, y0: 0, y1: 1 };            // manager desk footprint (2.9 tiles wide, 1 deep), left of the coffee counter
+  const MS = { x: 8.5, y: 1.5 };                            // the manager's seat
+  SLOTS.push({ i: MGR, row: 1, col: 4, dx: MD.x0, dy: 0, mgr: true, seat: MS, start: [[7, 1], [8, 2]],
+    px: FRONT1, py: 2.45, gapY: 3.5, ring: { x0: 5.9, y0: 0.15, x1: 9.1, y1: 2.35 }, lab: { x: 8.9, y: 2.25 }, desk: { x: 7.5, y: 0.5 } });
+  const COUNTER = { x0: 9, y0: 0, x1: 12, y1: 1 };
+  const PLANTS = [{ x: 0, y: 0 }, { x: 11, y: 5 }, { x: 11, y: 11 }, { x: 0, y: 11 }, { x: 7, y: 11 }];
+  // round meeting table in the open area (plan mode: everybody gathers here)
+  const TABLE = { x: 9, y: 7.5, r: 1.2, h: 15 };
+  const SEATS = [   // stools around the table, front-facing (camera sees the face) first; face = direction the person looks (towards the table)
+    [-1.31, -1.31, 0], [0, -1.85, 1], [-1.85, 0, 0], [1.31, -1.31, 1], [-1.31, 1.31, 0], [1.85, 0, 2], [0, 1.85, 3], [1.31, 1.31, 3],
+  ].map(([ox, oy, face], i) => ({ i, x: TABLE.x + ox, y: TABLE.y + oy, face }));
   const RUG = { x0: 8, y0: 1, x1: 11, y1: 4 };
   // standing spots (tile centres) near the coffee corner + the direction they face
   const SPOTS = {
@@ -40,7 +57,10 @@
   // blocked[y][x]: furniture the pathfinder must avoid
   const blocked = Array.from({ length: GY }, () => Array(GX).fill(false));
   const block = (x0, y0, x1, y1) => { for (let y = Math.floor(y0); y < Math.ceil(y1); y++) for (let x = Math.floor(x0); x < Math.ceil(x1); x++) blocked[y][x] = true; };
-  for (const s of SLOTS) { block(s.dx, s.dy, s.dx + 1, s.dy + 2); block(s.dx - 1, s.dy, s.dx, s.dy + 2); }
+  for (const s of SLOTS) { if (s.mgr) continue; block(s.dx, s.dy, s.dx + 1, s.dy + 2); block(s.dx - 1, s.dy, s.dx, s.dy + 2); }
+  block(MD.x0, MD.y0, MD.x1, MD.y1); block(8, 1, 9, 2);        // manager desk + chair
+  block(8, 6, 10, 9);                                           // round table
+  for (const st of SEATS) block(st.x - 0.1, st.y - 0.1, st.x + 0.1, st.y + 0.1);   // stools (a stool tile is only walkable as a destination)
   block(COUNTER.x0, COUNTER.y0, COUNTER.x1, COUNTER.y1);
   for (const p of PLANTS) block(p.x, p.y, p.x + 1, p.y + 1);
   const isBlocked = (tx, ty) => tx < 0 || ty < 0 || tx >= GX || ty >= GY || blocked[ty][tx];
@@ -51,7 +71,7 @@
     const s = SLOTS[slot];
     const key = (x, y) => y * GX + x;
     const prev = new Map(), q = [];
-    for (const [x, y] of [[s.dx - 1, s.dy], [s.dx - 1, s.dy + 1]]) { prev.set(key(x, y), -1); q.push([x, y]); }
+    for (const [x, y] of s.start) { prev.set(key(x, y), -1); q.push([x, y]); }
     const gx = Math.floor(spot.x), gy = Math.floor(spot.y);
     const D = [[1, 0], [0, 1], [-1, 0], [0, -1]];
     let found = false;
@@ -60,7 +80,7 @@
       if (x === gx && y === gy) { found = true; break; }
       for (const [dx, dy] of D) {
         const nx = x + dx, ny = y + dy;
-        if (isBlocked(nx, ny) || prev.has(key(nx, ny))) continue;
+        if ((isBlocked(nx, ny) && !(nx === gx && ny === gy && nx >= 0 && ny >= 0 && nx < GX && ny < GY)) || prev.has(key(nx, ny))) continue;
         prev.set(key(nx, ny), key(x, y)); q.push([nx, ny]);
       }
     }
@@ -169,7 +189,7 @@
     pr(c, px0, py0, dir, a0, a0 + w, v0 + (h >> 1), v0 + (h >> 1) + 1, '#eef1f8');
     pr(c, px0, py0, dir, a0 - 3, a0 + w + 3, v0 - 3, v0 - 1, '#cdd3e6'); pr(c, px0, py0, dir, a0 - 3, a0 + w + 3, v0 - 4, v0 - 3, '#7a84a6');
   }
-  const GLYPH = { C: ['###', '#..', '#..', '#..', '###'], A: ['###', '#.#', '###', '#.#', '#.#'], F: ['###', '#..', '##.', '#..', '#..'], E: ['###', '#..', '##.', '#..', '###'] };
+  const GLYPH = { M: ['#.#', '###', '###', '#.#', '#.#'], N: ['##.', '#.#', '#.#', '#.#', '#.#'], G: ['###', '#..', '#.#', '#.#', '###'], R: ['###', '#.#', '###', '##.', '#.#'], C: ['###', '#..', '#..', '#..', '###'], A: ['###', '#.#', '###', '#.#', '#.#'], F: ['###', '#..', '##.', '#..', '#..'], E: ['###', '#..', '##.', '#..', '###'] };
   function plant(c, x, y) { // drawn dynamically so characters can pass in front / behind
     const cx = sx(x + 0.5, y + 0.5), by = sy(x + 0.5, y + 0.5, 0);
     box(c, x + 0.28, y + 0.28, x + 0.72, y + 0.72, 0, 7, { top: '#6b3f1c', se: '#9a5a22', sw: '#b5702e', hi: '#d28a3a' });
@@ -194,9 +214,17 @@
 
     // floor shadows under furniture
     for (const s of SLOTS) {
+      if (s.mgr) continue;
       poly(c, [A(s.dx, s.dy + 0.05), A(s.dx + 1.35, s.dy + 0.05), A(s.dx + 1.35, s.dy + 2.15), A(s.dx, s.dy + 2.15)], 'rgba(40,30,15,.17)');
       poly(c, [A(s.dx - 0.95, s.dy + 0.5), A(s.dx - 0.1, s.dy + 0.5), A(s.dx - 0.1, s.dy + 1.6), A(s.dx - 0.95, s.dy + 1.6)], 'rgba(40,30,15,.12)');
     }
+    // manager desk + round table: floor shadows and the meeting rug
+    poly(c, [A(MD.x0 - 0.1, MD.y0), A(MD.x1 + 0.35, MD.y0), A(MD.x1 + 0.35, MD.y1 + 0.2), A(MD.x0 - 0.1, MD.y1 + 0.2)], 'rgba(40,30,15,.17)');
+    poly(c, [A(8.05, 1.1), A(8.95, 1.1), A(8.95, 1.95), A(8.05, 1.95)], 'rgba(40,30,15,.12)');
+    const ring = (cx, cy, r, col, z) => poly(c, Array.from({ length: 56 }, (_, k) => A(cx + r * Math.cos((k / 56) * Math.PI * 2), cy + r * Math.sin((k / 56) * Math.PI * 2), z || 0)), col);
+    ring(TABLE.x, TABLE.y, 2.55, '#3a4766'); ring(TABLE.x, TABLE.y, 2.43, '#4c5b82'); ring(TABLE.x, TABLE.y, 2.12, '#3f4d71'); ring(TABLE.x, TABLE.y, 2.0, '#566794');
+    ring(TABLE.x + 0.18, TABLE.y + 0.18, 1.5, 'rgba(25,20,10,.18)');
+    for (const st of SEATS) ring(st.x + 0.08, st.y + 0.08, 0.34, 'rgba(25,20,10,.2)');
     // rug under the coffee corner
     const rp = (i) => (x0, y0, x1, y1, col) => poly(c, [A(x0, y0), A(x1, y0), A(x1, y1), A(x0, y1)], col);
     const rug = rp();
@@ -231,9 +259,9 @@
     pr(c, ...LW, 65, 83, 25, 41, '#a06a3e'); pr(c, ...LW, 65, 83, 5, 21, '#a06a3e'); pr(c, ...LW, 66, 82, 26, 40, '#935f37'); pr(c, ...LW, 66, 82, 6, 20, '#935f37');
     pr(c, ...LW, 80, 83, 21, 24, '#f5c542');
     // poster (right wall) + whiteboard & poster (left wall)
-    pr(c, ...RW, 104, 124, 22, 46, '#2b3149'); pr(c, ...RW, 105, 123, 23, 45, '#f2e6c8');
-    pr(c, ...RW, 108, 120, 34, 42, '#3e8ef7'); pr(c, ...RW, 110, 114, 34, 38, '#30a46c'); pr(c, ...RW, 115, 119, 36, 41, '#f5a524');
-    pr(c, ...RW, 108, 120, 30, 31, '#6b5b3a'); pr(c, ...RW, 108, 116, 27, 28, '#6b5b3a'); pr(c, ...RW, 108, 118, 25, 26, '#6b5b3a');
+    // brass "MANAGER" sign above the manager desk (right wall)
+    pr(c, ...RW, 90, 128, 33, 48, '#2b3149'); pr(c, ...RW, 91, 127, 34, 47, '#caa24a'); pr(c, ...RW, 91, 127, 46, 47, '#f0d98a'); pr(c, ...RW, 91, 127, 34, 35, '#8f6f22');
+    'MANAGER'.split('').forEach((ch, n) => GLYPH[ch].forEach((row, j) => { for (let i = 0; i < 3; i++) if (row[i] === '#') pr(c, ...RW, 96 + n * 4 + i, 97 + n * 4 + i, 37 + (4 - j), 38 + (4 - j), '#3a2a0b'); }));
     pr(c, ...LW, 128, 146, 22, 46, '#2b3149'); pr(c, ...LW, 129, 145, 23, 45, '#f2e6c8');
     pr(c, ...LW, 132, 142, 31, 42, '#e93d82'); pr(c, ...LW, 134, 140, 34, 39, '#f5c542'); pr(c, ...LW, 132, 142, 26, 27, '#6b5b3a'); pr(c, ...LW, 132, 139, 28, 29, '#6b5b3a');
     pr(c, ...LW, 152, 190, 22, 48, '#cdd3e6'); pr(c, ...LW, 153, 189, 23, 47, '#f7f8fc');
@@ -277,39 +305,72 @@
   }
 
   // ---------- furniture ----------
-  function drawMonitor(c, s, state, t, ph, led) {
-    const { dx, dy } = s, ym = dy + 1.625, x0 = dx + 0.125, x1 = dx + 0.875;
-    const px0 = sx(x0, ym), py0 = sy(x0, ym, 0);
-    pr(c, px0, py0, 1, 4, 8, 13, 16, '#3a3f4f'); pr(c, px0, py0, 1, 2, 10, 13, 14, '#2b2f3b');       // stand + foot
-    pr(c, sx(x1, ym - 0.125), sy(x1, ym - 0.125, 0), -1, 0, 2, 16, 27, '#1b1e27');                    // right side of the case
-    pr(c, px0, py0, 1, 0, 12, 16, 27, '#2b2f3b'); pr(c, px0, py0, 1, 0, 12, 26, 27, '#4a4f61');      // bezel
-    const Rr = (a0, a1, v0, v1, col) => pr(c, px0, py0, 1, a0, a1, v0, v1, col);
-    if (state === 'working') {
-      Rr(1, 11, 17, 26, '#0e1f1a');
-      const tick = Math.floor(t * 6 + ph * 5);
-      for (let i = 0; i < 4; i++) { const w = 3 + Math.floor(rnd(tick + i * 7) * 7); Rr(2 + (i % 2), 2 + (i % 2) + Math.min(w, 8), 24 - i * 2, 25 - i * 2, i % 2 ? '#7fd6ff' : '#5ff2a5'); }
-      if (Math.floor(t * 18 + ph) % 6 === 0) Rr(1, 11, 17, 26, '#244d3f');
-    } else if (state === 'thinking') {
-      Rr(1, 11, 17, 26, '#1d2a44');
-      const k = Math.floor(t * 3) % 4;
-      for (let i = 0; i < 3; i++) Rr(2 + i * 3, 4 + i * 3, 20, 22, i < k ? '#b7a8ff' : '#33446a');
-    } else if (state === 'done') {
-      Rr(1, 11, 17, 26, '#143d2a');
-      [[3, 20], [4, 19], [5, 18], [6, 19], [7, 20], [8, 21], [9, 22]].forEach(([a, v]) => Rr(a, a + 1, v, v + 2, '#6be39b'));
-    } else if (state === 'error') {
-      Rr(1, 11, 17, 26, Math.floor(t * 4) % 2 ? '#4a1218' : '#6a1a22'); Rr(5, 7, 21, 25, '#fff'); Rr(5, 7, 18, 20, '#fff');
-    } else if (state === 'off') {
-      Rr(1, 11, 17, 26, '#10131c'); Rr(2, 6, 24, 25, '#2a3040'); Rr(2, 4, 23, 24, '#2a3040');
-    } else {
-      Rr(1, 11, 17, 26, '#1d2a44');
-      [[0, 6], [1, 4], [2, 7]].forEach(([i, w]) => Rr(2, 2 + w, 24 - i * 3, 25 - i * 3, '#3a5a8a'));
-      if (Math.floor(t * 1.6 + ph) % 2) Rr(2, 4, 17.5 | 0, 19, '#9fe8ff');
+  /** colour/strength of the screen light for a state (null = monitor off) */
+  function screenGlow(state, t, ph) {
+    switch (state) {
+      case 'working': { const k = Math.floor(t * 8 + ph * 5); return { col: k % 3 ? '#5ff2a5' : '#7fd6ff', a: k % 2 ? 0.55 : 0.85 }; }
+      case 'thinking': return { col: '#b7a8ff', a: 0.45 + 0.25 * Math.sin(t * 3 + ph * 6) };
+      case 'done': return { col: '#6be39b', a: 0.7 };
+      case 'error': return { col: Math.floor(t * 4) % 2 ? '#ff5a5a' : '#b0303c', a: 0.8 };
+      case 'off': return null;
+      default: return { col: '#6a8fd0', a: 0.28 };
     }
-    Rr(10, 11, 16, 17, led || '#5ff2a5');
+  }
+
+  /** Regular desks: the monitor stands on the desk IN FRONT of the person (x = dx+0.6..0.74), the screen faces the person (-x), so the camera
+   *  sees its back. The screen state is told by the light leaking round the case (halo), the status light + light bar on the back, the glow
+   *  on the desk and on the person's face, and the tool chip over the head. */
+  function drawMonitor(c, s, state, t, ph) {
+    const { dx, dy } = s, x0 = dx + 0.6, x1 = dx + 0.74, y0 = dy + 0.45, y1 = dy + 1.45, zb = 16, zt = 29;
+    const g = screenGlow(state, t, ph), q = [sx(x1, y0), sy(x1, y0, 0)];     // the back plane (x = x1) runs down-left from here, a = pixels along +y
+    if (g) { c.globalAlpha = g.a * 0.45; pr(c, q[0], q[1], -1, -3, 19, zb - 3, zt + 3, g.col); c.globalAlpha = g.a * 0.65; pr(c, q[0], q[1], -1, -1, 17, zb - 1, zt + 1, g.col); c.globalAlpha = 1; }
+    box(c, dx + 0.52, dy + 0.78, dx + 0.82, dy + 1.12, DESKZ, DESKZ + 1, { top: '#3a3f4f', se: '#1b1e27', sw: '#2b2f3b' });            // foot
+    box(c, dx + 0.63, dy + 0.9, dx + 0.71, dy + 1.0, DESKZ + 1, zb, { top: '#555a6a', se: '#2b2f3b', sw: '#3a3f4f' });                 // stand
+    box(c, x0, y0, x1, y1, zb, zt, { top: '#454b5e', se: '#2a2e3a', sw: '#1b1e27', hi: '#5a6078' });
+    pr(c, q[0], q[1], -1, 1, 15, zb + 1, zt - 1, '#323746'); pr(c, q[0], q[1], -1, 2, 14, zb + 2, zt - 2, '#2a2e3a');                  // back panel
+    for (let i = 0; i < 3; i++) pr(c, q[0], q[1], -1, 3, 8, zb + 4 + i * 2, zb + 5 + i * 2, '#1e222d');                                 // vents
+    pr(c, q[0], q[1], -1, 9, 13, zt - 6, zt - 4, '#4a5068');                                                                           // logo
+    if (g) { pr(c, q[0], q[1], -1, 11, 13, zb + 2, zb + 3, g.col); c.globalAlpha = g.a * 0.7; pr(c, q[0], q[1], -1, 1, 15, zb, zb + 1, g.col); c.globalAlpha = 1; }
+    else pr(c, q[0], q[1], -1, 11, 13, zb + 2, zb + 3, '#10131c');
+  }
+
+  /** a screen facing +y (the camera): the manager's monitors. xl = left x, w = width in px (16 px = 1 tile), ym = the plane's y. */
+  function drawScreenSW(c, xl, ym, w, state, t, ph, tall) {
+    const px0 = sx(xl, ym), py0 = sy(xl, ym, 0), mid = w >> 1, o = (w - 12) >> 1, dv = tall ? 3 : 0, top = 27 + dv;
+    const Rr = (a0, a1, v0, v1, col) => pr(c, px0, py0, 1, a0, a1, v0, v1, col);
+    const Rc = (a0, a1, v0, v1, col) => Rr(a0 + o, a1 + o, v0 + dv, v1 + dv, col);
+    Rr(mid - 2, mid + 2, 13, 16, '#3a3f4f'); Rr(mid - 5, mid + 5, 13, 14, '#2b2f3b');                                        // stand + foot
+    pr(c, sx(xl + w / 16, ym - 0.125), sy(xl + w / 16, ym - 0.125, 0), -1, 0, 2, 16, top, '#1b1e27');                           // right side of the case
+    Rr(0, w, 16, top, '#2b2f3b'); Rr(0, w, top - 1, top, '#4a4f61');                                                            // bezel
+    const inner = (col) => Rr(1, w - 1, 17, top - 1, col);
+    if (state === 'working') {
+      inner('#0e1f1a');
+      const tick = Math.floor(t * 6 + ph * 5);
+      for (let i = 0; i < 4; i++) { const ww = 3 + Math.floor(rnd(tick + i * 7) * 7); Rc(2 + (i % 2), 2 + (i % 2) + Math.min(ww, 8), 24 - i * 2, 25 - i * 2, i % 2 ? '#7fd6ff' : '#5ff2a5'); }
+      if (Math.floor(t * 18 + ph) % 6 === 0) inner('#244d3f');
+    } else if (state === 'thinking') {
+      inner('#1d2a44');
+      const k = Math.floor(t * 3) % 4;
+      for (let i = 0; i < 3; i++) Rc(2 + i * 3, 4 + i * 3, 20, 22, i < k ? '#b7a8ff' : '#33446a');
+    } else if (state === 'done') {
+      inner('#143d2a');
+      [[3, 20], [4, 19], [5, 18], [6, 19], [7, 20], [8, 21], [9, 22]].forEach(([a, v]) => Rc(a, a + 1, v, v + 2, '#6be39b'));
+    } else if (state === 'error') {
+      inner(Math.floor(t * 4) % 2 ? '#4a1218' : '#6a1a22'); Rc(5, 7, 21, 25, '#fff'); Rc(5, 7, 18, 20, '#fff');
+    } else if (state === 'off') {
+      inner('#10131c'); Rc(2, 6, 24, 25, '#2a3040'); Rc(2, 4, 23, 24, '#2a3040');
+    } else {
+      inner('#1d2a44');
+      [[0, 6], [1, 4], [2, 7]].forEach(([i, ww]) => Rc(2, 2 + ww, 24 - i * 3, 25 - i * 3, '#3a5a8a'));
+      if (Math.floor(t * 1.6 + ph) % 2) Rc(2, 4, 17.5 | 0, 19, '#9fe8ff');
+    }
+    const g = screenGlow(state, t, ph); Rr(w - 2, w - 1, 16, 17, g ? g.col : '#10131c');
   }
 
   function drawDesk(c, s, ag, t) {
+    if (s.mgr) return drawMgrDesk(c, s, ag, t);
     const { dx, dy } = s, x0 = dx, x1 = dx + 1, y0 = dy, y1 = dy + 2;
+    const st = ag ? (ag.away ? 'idle' : ag.state) : 'off', ph = ag ? ag.phase : 0, g = screenGlow(st, t, ph);
     box(c, x0, y0, x1, y1, 0, DESKZ, { top: '#cfa56a', se: '#8f6538', sw: '#a77a46', hi: '#ecca94', dk: '#6e4b28' });
     const p = [sx(x0, y1), sy(x0, y1, 0)];                       // SW face: drawers
     pr(c, p[0], p[1], 1, 0, 16, 0, 2, '#5e3f22'); pr(c, p[0], p[1], 1, 0, 16, 10, 12, '#bc8e58');
@@ -318,32 +379,76 @@
     pr(c, q[0], q[1], -1, 0, 32, 0, 2, '#5e3f22'); pr(c, q[0], q[1], -1, 0, 32, 10, 12, '#a9794a');
     pr(c, q[0], q[1], -1, 15, 17, 2, 10, '#7a502a');
     if (ag) { pr(c, q[0], q[1], -1, 21, 29, 5, 8, ag.look.shirt); pr(c, q[0], q[1], -1, 21, 29, 7, 8, shade(ag.look.shirt, 35)); }
-    // glow on the desk while working
-    if (ag && !ag.away && ag.state === 'working') poly(c, [A(dx + 0.05, dy + 0.4, DESKZ), A(dx + 0.7, dy + 0.4, DESKZ), A(dx + 0.7, dy + 1.5, DESKZ), A(dx + 0.05, dy + 1.5, DESKZ)], 'rgba(127,214,255,.14)');
+    // the screen lights up the desk in front of it (keyboard side), in the state colour
+    if (g) { c.globalAlpha = Math.min(0.22, g.a * 0.2); poly(c, [A(dx + 0.05, dy + 0.4, DESKZ), A(dx + 0.6, dy + 0.4, DESKZ), A(dx + 0.6, dy + 1.5, DESKZ), A(dx + 0.05, dy + 1.5, DESKZ)], g.col); c.globalAlpha = 1; }
     // keyboard
     poly(c, [A(dx + 0.12, dy + 0.62, DESKZ), A(dx + 0.46, dy + 0.62, DESKZ), A(dx + 0.46, dy + 1.3, DESKZ), A(dx + 0.12, dy + 1.3, DESKZ)], '#d6dae6');
     const k1 = A(dx + 0.46, dy + 0.62, DESKZ), k2 = A(dx + 0.46, dy + 1.3, DESKZ), k3 = A(dx + 0.12, dy + 1.3, DESKZ);
     line(c, k1[0], k1[1], k2[0], k2[1], '#9aa0b4', 1); line(c, k2[0], k2[1], k3[0], k3[1], '#9aa0b4', 1);
     for (let i = 0; i < 3; i++) for (let j = 0; j < 4; j++) { const kp = A(dx + 0.2 + i * 0.1, dy + 0.74 + j * 0.13, DESKZ); R(c, kp[0], kp[1], 1, 1, '#8a90a6'); }
-    // mug, papers, lamp
-    box(c, dx + 0.62, dy + 0.18, dx + 0.82, dy + 0.38, DESKZ, DESKZ + 4, { top: '#5b3a1e', se: '#c9c9c0', sw: '#f5f5f0' });
-    const mh = A(dx + 0.84, dy + 0.28, DESKZ + 2); R(c, mh[0], mh[1], 1, 2, '#f5f5f0');
-    poly(c, [A(dx + 0.56, dy + 0.62, DESKZ), A(dx + 0.86, dy + 0.62, DESKZ), A(dx + 0.86, dy + 1.0, DESKZ), A(dx + 0.56, dy + 1.0, DESKZ)], '#f4f1e6');
-    const pa = A(dx + 0.7, dy + 0.8, DESKZ); R(c, pa[0] - 2, pa[1], 4, 1, '#c9c2a8');
+    // mug (front corner), papers (behind the keyboard), lamp
+    box(c, dx + 0.3, dy + 1.62, dx + 0.5, dy + 1.82, DESKZ, DESKZ + 4, { top: '#5b3a1e', se: '#c9c9c0', sw: '#f5f5f0' });
+    const mh = A(dx + 0.52, dy + 1.72, DESKZ + 2); R(c, mh[0], mh[1], 1, 2, '#f5f5f0');
+    poly(c, [A(dx + 0.12, dy + 0.06, DESKZ), A(dx + 0.42, dy + 0.06, DESKZ), A(dx + 0.42, dy + 0.4, DESKZ), A(dx + 0.12, dy + 0.4, DESKZ)], '#f4f1e6');
+    const pa = A(dx + 0.27, dy + 0.24, DESKZ); R(c, pa[0] - 2, pa[1], 4, 1, '#c9c2a8');
     if (s.i % 2 === 0) { // desk lamp
       box(c, dx + 0.7, dy + 0.05, dx + 0.82, dy + 0.15, DESKZ, DESKZ + 1, { top: '#2b2f3b', se: '#1b1e27', sw: '#2b2f3b' });
       const lp = A(dx + 0.76, dy + 0.1, DESKZ + 1); R(c, lp[0], lp[1] - 7, 1, 7, '#2b2f3b'); R(c, lp[0] - 3, lp[1] - 9, 5, 2, '#f5c542'); R(c, lp[0] - 2, lp[1] - 7, 3, 1, '#fff3b0');
     }
-    drawMonitor(c, s, ag ? (ag.away ? 'idle' : ag.state) : 'off', t, ag ? ag.phase : 0, ag && ag.look.shirt);
+    drawMonitor(c, s, st, t, ph);
+  }
+
+  /** the manager's desk: big walnut desk against the back wall, leather blotter, brass star plate, two monitors facing the camera and the manager */
+  function drawMgrDesk(c, s, ag, t) {
+    const st = ag ? (ag.away ? 'idle' : ag.state) : 'off', ph = ag ? ag.phase : 0, g = screenGlow(st, t, ph);
+    box(c, MD.x0, MD.y0, MD.x1, MD.y1, 0, DESKZ, { top: '#a3703f', se: '#5a3a20', sw: '#74492a', hi: '#dcb072', dk: '#43291a' });
+    const L = Math.round((MD.x1 - MD.x0) * 16), p = [sx(MD.x0, MD.y1), sy(MD.x0, MD.y1, 0)];   // front face (+y): pedestals with drawers + a panel
+    pr(c, p[0], p[1], 1, 0, L, 0, 2, '#3d2514'); pr(c, p[0], p[1], 1, 0, L, 11, 13, '#c4935a'); pr(c, p[0], p[1], 1, 0, L, 10, 11, '#4a2d19');
+    pr(c, p[0], p[1], 1, 15, L - 15, 2, 10, '#5e3b22'); pr(c, p[0], p[1], 1, 17, L - 17, 3, 9, '#7b4e2d'); pr(c, p[0], p[1], 1, 19, L - 19, 4, 8, '#6a4226');
+    for (const k0 of [1, L - 15]) for (const [v0, v1] of [[2, 6], [6, 10]]) { pr(c, p[0], p[1], 1, k0, k0 + 14, v0, v1, '#6e4724'); pr(c, p[0], p[1], 1, k0 + 1, k0 + 13, v0 + 1, v1, '#8d5f33'); pr(c, p[0], p[1], 1, k0 + 6, k0 + 8, v0 + 2, v0 + 3, '#f0cf7a'); }
+    const q = [sx(MD.x1, MD.y0), sy(MD.x1, MD.y0, 0)];
+    pr(c, q[0], q[1], -1, 0, 16, 0, 2, '#3d2514'); pr(c, q[0], q[1], -1, 0, 16, 11, 13, '#a9794a'); pr(c, q[0], q[1], -1, 3, 13, 3, 10, '#6e4724');
+    // leather blotter + keyboard (the glow of the screens falls on the blotter)
+    const bl = (x0, y0, x1, y1, col) => poly(c, [A(x0, y0, DESKZ), A(x1, y0, DESKZ), A(x1, y1, DESKZ), A(x0, y1, DESKZ)], col);
+    bl(7.9, 0.56, 8.96, 0.98, '#d6b25e'); bl(7.92, 0.58, 8.94, 0.96, '#2f5a48');
+    if (g) { c.globalAlpha = Math.min(0.3, g.a * 0.28); bl(7.92, 0.58, 8.94, 0.96, g.col); c.globalAlpha = 1; }
+    bl(8.05, 0.65, 8.75, 0.9, '#d6dae6');
+    const k1 = A(8.75, 0.65, DESKZ), k2 = A(8.75, 0.9, DESKZ), k3 = A(8.05, 0.9, DESKZ);
+    line(c, k1[0], k1[1], k2[0], k2[1], '#9aa0b4', 1); line(c, k2[0], k2[1], k3[0], k3[1], '#9aa0b4', 1);
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 2; j++) { const kp = A(8.13 + i * 0.1, 0.69 + j * 0.1, DESKZ); R(c, kp[0], kp[1], 1, 1, '#8a90a6'); }
+    // brass star plate (front left), mug, papers
+    box(c, 6.5, 0.74, 6.95, 0.84, DESKZ, DESKZ + 6, { top: '#f0d98a', se: '#8f6f22', sw: '#caa24a', hi: '#fff3b0' });
+    const sp = A(6.73, 0.84, DESKZ + 3);
+    for (const [dx2, dy2] of [[0, -2], [-1, -1], [0, -1], [1, -1], [-2, 0], [-1, 0], [0, 0], [1, 0], [2, 0], [-1, 1], [0, 1], [1, 1], [-1, 2], [1, 2]]) R(c, sp[0] + dx2, sp[1] + dy2, 1, 1, '#3a2a0b');
+    box(c, 7.2, 0.82, 7.37, 0.95, DESKZ, DESKZ + 4, { top: '#5b3a1e', se: '#c9c9c0', sw: '#f5f5f0' });
+    bl(8.85, 0.25, 8.97, 0.5, '#f4f1e6');
+    drawScreenSW(c, 6.25, 0.5, 14, st, t, ph + 0.37, false);
+    drawScreenSW(c, 7.875, 0.5, 14, st, t, ph, true);
   }
 
   function drawChair(c, s) {
+    if (s.mgr) return drawMgrChair(c, s);
     const { dx, dy } = s, cs = { top: '#4d5575', se: '#2f3550', sw: '#3b4260', hi: '#6a739a' };
     box(c, dx - 0.55, dy + 0.95, dx - 0.45, dy + 1.05, 0, 6, { top: '#555a6a', se: '#2b2f3b', sw: '#3a3f4f' });
     poly(c, [A(dx - 0.9, dy + 0.98, 1), A(dx - 0.1, dy + 0.98, 1), A(dx - 0.1, dy + 1.02, 1), A(dx - 0.9, dy + 1.02, 1)], '#2b2f3b');
     poly(c, [A(dx - 0.52, dy + 0.55, 1), A(dx - 0.48, dy + 0.55, 1), A(dx - 0.48, dy + 1.45, 1), A(dx - 0.52, dy + 1.45, 1)], '#2b2f3b');
     box(c, dx - 0.95, dy + 0.55, dx - 0.8, dy + 1.45, 8, 23, cs);
     box(c, dx - 0.9, dy + 0.6, dx - 0.1, dy + 1.4, 6, 9, cs);
+  }
+
+  const LEA = { top: '#8a3340', se: '#4f1e26', sw: '#69272f', hi: '#b8505f' }, ARM = { top: '#2b2f3b', se: '#1b1e27', sw: '#2b2f3b' };
+  /** the manager's chair: leather seat, arm rests, gas-lift star base (the back rest is a separate object, drawn after the person) */
+  function drawMgrChair(c) {
+    const cx = MS.x;
+    poly(c, [A(cx - 0.4, 1.46, 1), A(cx + 0.4, 1.46, 1), A(cx + 0.4, 1.54, 1), A(cx - 0.4, 1.54, 1)], '#22252f'); poly(c, [A(cx - 0.04, 1.1, 1), A(cx + 0.04, 1.1, 1), A(cx + 0.04, 1.9, 1), A(cx - 0.04, 1.9, 1)], '#22252f');
+    box(c, cx - 0.05, 1.45, cx + 0.05, 1.55, 1, 6, { top: '#555a6a', se: '#2b2f3b', sw: '#3a3f4f' });
+    box(c, cx - 0.4, 1.1, cx + 0.4, 1.9, 6, 9, LEA);
+    box(c, cx - 0.48, 1.15, cx - 0.38, 1.75, 9, 12, ARM); box(c, cx + 0.38, 1.15, cx + 0.48, 1.75, 9, 12, ARM);
+  }
+  function drawMgrBack(c) {
+    const cx = MS.x;
+    box(c, cx - 0.43, 1.8, cx + 0.43, 1.92, 9, 14, LEA);
+    box(c, cx - 0.43, 1.8, cx - 0.33, 1.92, 14, 23, LEA); box(c, cx + 0.33, 1.8, cx + 0.43, 1.92, 14, 23, LEA);      // tall wings left and right of the sitter
   }
 
   // ---------- characters ----------
@@ -430,13 +535,21 @@
     head(c, look, -22 + by, front, { blink, mood, lk: 0 });
     const S1 = [-4, -9 + by], S2 = [4, -9 + by];
     let N = [6, 1], Fh = [11, -1.5];                                  // hands on the keyboard
-    if (face !== 0) { N = [-3, -1]; Fh = [5, -1]; }
-    else if (st === 'working') {
+    if (ag.meet) { N = [5, -4]; Fh = [9, -5]; if (st === 'thinking') Fh = [3, -12 + by]; else if (st === 'working') { const f = Math.floor(t * 10 + ph * 3); Fh = [9 + (f % 3 === 1 ? 1 : 0), -5 - (f % 2)]; } }   // hands on the table
+    else if (face === 3) {                                             // the manager: back to us, hands forward on the keyboard
+      N = [5, -4]; Fh = [9, -4.5];
+      if (st === 'working') { const f = Math.floor(t * 10 + ph * 3); N = [5 - (f % 3 === 0 ? 1 : 0), -4 - (f % 2)]; Fh = [9 + (f % 3 === 1 ? 1 : 0), -4.5 - ((f + 1) % 2)]; }
+      else if (st === 'thinking') Fh = [3, -12 + by];
+    }
+    else if (face !== 0) { N = [-3, -1]; Fh = [5, -1]; }
+    else if (st === 'working' && face === 0) {
       const f = Math.floor(t * 10 + ph * 3);
       N = [6 - (f % 3 === 0 ? 1 : 0), 1 + (f % 2)]; Fh = [11 + (f % 3 === 1 ? 1 : 0), -1.5 + ((f + 1) % 2)];
     } else if (st === 'thinking') Fh = [3, -12 + by];
     else if (st === 'done') { const b = Math.floor(Math.abs(Math.sin(t * 6)) * 3); N = [-9, -27 - b]; Fh = [9, -27 - b]; }
     else if (st === 'error') { const j = Math.floor(t * 8) % 2; N = [-6 - j, -21]; Fh = [6 + j, -21]; }
+    if ((ag.meet || face === 3) && st === 'done') { const b = Math.floor(Math.abs(Math.sin(t * 6)) * 3); N = [-9, -27 - b]; Fh = [9, -27 - b]; }
+    else if ((ag.meet || face === 3) && st === 'error') { const j = Math.floor(t * 8) % 2; N = [-6 - j, -21]; Fh = [6 + j, -21]; }
     if (act === 'stretch') { N = [N[0] + (-10 - N[0]) * k, N[1] + (-31 - N[1]) * k]; Fh = [Fh[0] + (10 - Fh[0]) * k, Fh[1] + (-31 - Fh[1]) * k]; }
     else if (act === 'read') { N = [-3, -6]; Fh = [5, -7]; }
     limb(c, S2[0], S2[1], Fh[0], Fh[1], look, 1, true);
@@ -501,13 +614,16 @@
   }
   const FLIP = [false, true, true, false];     // facings 1 (SW) and 2 (NW) are mirrored sprites
   const LOOK_SEQ = [0, 1, 1, 0, 3, 3];         // swivel sequence while "looking around" at the desk
-  const seatFace = (e) => (e.faceOv != null ? e.faceOv : e.act === 'look' ? LOOK_SEQ[Math.floor((e.actP || 0) / 0.9) % 6] : 0);
-  const faceOf = (e) => (e.away ? (e.face || 0) : seatFace(e));
+  const MGR_LOOK = [3, 2, 2, 3, 0, 0];         // the manager swivels the other way (their default is back to the camera)
+  const seatFace = (e) => (e.faceOv != null ? e.faceOv : e.act === 'look' ? (e.slot === MGR ? MGR_LOOK : LOOK_SEQ)[Math.floor((e.actP || 0) / 0.9) % 6] : e.slot === MGR ? 3 : 0);
+  const faceOf = (e) => (e.meet ? e.face || 0 : e.away ? (e.face || 0) : seatFace(e));
+  const sitting = (e) => !e.away || !!e.meet;          // on a chair (at the desk) or on a stool (meeting table)
+  const seatAt = (e) => (e.meet ? { x: e.x, y: e.y } : SLOTS[e.slot].seat);
 
   function renderPerson(c, e, t, seated) {
     const face = faceOf(e), ret = {};
     let ax, ay;
-    if (seated) { const s = SLOTS[e.slot]; ax = sx(s.seat.x, s.seat.y); ay = sy(s.seat.x, s.seat.y, SEAT); }
+    if (seated) { const s = seatAt(e); ax = sx(s.x, s.y); ay = sy(s.x, s.y, SEAT); }
     else {
       ax = sx(e.x, e.y); ay = sy(e.x, e.y, 0);
       for (let dy = -3; dy <= 3; dy++) { const w = Math.round(9 * Math.sqrt(1 - (dy * dy) / 12.25)); R(c, ax - w, ay + dy, w * 2, 1, 'rgba(40,30,15,.28)'); }
@@ -515,6 +631,10 @@
     sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, 80, 80); sc.setTransform(1, 0, 0, 1, ORX, ORY);
     if (seated) drawSeated(sc, e, t, face); else drawStanding(sc, e, t, face, ret);
     sc.setTransform(1, 0, 0, 1, 0, 0);
+    if (seated && !e.meet && face === 0 && e.slot !== MGR && !e.help) {      // the screen in front of them lights their face + chest in the state colour
+      const g = screenGlow(e.state, t, e.phase);
+      if (g) { sc.globalCompositeOperation = 'source-atop'; sc.globalAlpha = Math.min(0.3, g.a * 0.3); sc.fillStyle = g.col; sc.fillRect(ORX - 2, ORY - 31, 10, 24); sc.globalAlpha = 1; sc.globalCompositeOperation = 'source-over'; }
+    }
     blit(c, ax, ay, FLIP[face]);
     if (ret.mug) { const mx = ax + (FLIP[face] ? -ret.mug[0] : ret.mug[0]), s2 = Math.floor(t * 4) % 2; c.globalAlpha = 0.8; R(c, mx - 1 + s2, ay + ret.mug[1] - 3, 1, 2, '#fff'); R(c, mx + 1 - s2, ay + ret.mug[1] - 6, 1, 2, '#fff'); c.globalAlpha = 1; }
   }
@@ -549,16 +669,13 @@
 
   /** Floor route (tile coordinates) between two desks, along the aisles / gaps between the desks, so dotted lines and flying papers never cross
    *  furniture. `off` separates parallel lanes so several helpers' lines do not lie on top of each other. */
-  const AISLE = 3.55, FRONT1 = 6.55;
   function deskRoute(sa, sb, off) {
-    const A0 = SLOTS[sa], B0 = SLOTS[sb], T = AISLE + off, F = (s) => (s.row ? FRONT1 : AISLE) + off;
-    const gap = (s) => (s.col < 3 ? s.dy + 2.5 : s.dy - 0.5) + off, y0 = (s) => s.dy + 1;
+    const A0 = SLOTS[sa], B0 = SLOTS[sb], T = AISLE + off, F = (s) => s.px + off, gap = (s) => s.gapY + off, y0 = (s) => s.py;
     let pts;
-    if (A0.row === B0.row) pts = [[F(A0), y0(A0)], [F(A0), y0(B0)]];
+    if (A0.row === B0.row) pts = [[F(A0), y0(A0)], [F(A0), y0(B0)], [F(B0), y0(B0)]];
     else if (A0.row) pts = [[F(A0), y0(A0)], [F(A0), gap(A0)], [T, gap(A0)], [T, y0(B0)]];
     else pts = [[T, y0(A0)], [T, gap(B0)], [F(B0), gap(B0)], [F(B0), y0(B0)]];
-    if (A0.row !== B0.row && !B0.row) { /* row1 -> row0 ends on the aisle */ }
-    return pts;
+    return pts.filter((q, i) => !i || Math.abs(q[0] - pts[i - 1][0]) > 1e-6 || Math.abs(q[1] - pts[i - 1][1]) > 1e-6);
   }
   /** same route as screen points (z = floor height of the line) */
   const routeScreen = (sa, sb, off, z) => deskRoute(sa, sb, off).map(([x, y]) => A(x, y, z || 0));
@@ -610,21 +727,51 @@
   }
 
   // ---------- scene: objects, depth sorting ----------
-  function buildObjects(entries, t) {
+  function stool(c, st, occupied) {
+    const tt = { top: '#3d4a6f', se: '#232c47', sw: '#2e3856', hi: '#5a6a9a' };
+    box(c, st.x - 0.05, st.y - 0.05, st.x + 0.05, st.y + 0.05, 0, 6, { top: '#555a6a', se: '#2b2f3b', sw: '#3a3f4f' });
+    poly(c, [A(st.x - 0.24, st.y - 0.03, 1), A(st.x + 0.24, st.y - 0.03, 1), A(st.x + 0.24, st.y + 0.03, 1), A(st.x - 0.24, st.y + 0.03, 1)], '#2b2f3b');
+    poly(c, [A(st.x - 0.03, st.y - 0.24, 1), A(st.x + 0.03, st.y - 0.24, 1), A(st.x + 0.03, st.y + 0.24, 1), A(st.x - 0.03, st.y + 0.24, 1)], '#2b2f3b');
+    box(c, st.x - 0.26, st.y - 0.26, st.x + 0.26, st.y + 0.26, 6, 8, tt);
+  }
+  function drawTable(c, t, plan) {
+    const { x, y, r } = TABLE, N = 40, rim = (z, rr) => Array.from({ length: N }, (_, k) => A(x + rr * Math.cos((k / N) * Math.PI * 2), y + rr * Math.sin((k / N) * Math.PI * 2), z));
+    box(c, x - 0.12, y - 0.12, x + 0.12, y + 0.12, 0, 11, { top: '#555a6a', se: '#2b2f3b', sw: '#3a3f4f' });
+    poly(c, rim(1, 0.55), '#2b2f3b'); poly(c, rim(1.5, 0.45), '#3a3f4f');
+    // the round top: a rim (thickness) under the lit surface
+    for (let z = 12; z <= 14; z++) poly(c, rim(z, r), z === 12 ? '#6e4724' : '#8a5a31');
+    poly(c, rim(15, r), '#b98650'); poly(c, rim(15, r - 0.07), '#d6a76c'); poly(c, rim(15, r - 0.5), '#cf9d62');
+    const hi = A(x - 0.35, y - 0.55, 15); R(c, hi[0] - 4, hi[1], 8, 1, 'rgba(255,240,200,.45)');
+    // paper pads in front of every chair + a speaker puck (it is a meeting table)
+    for (const st of SEATS) { const px = x + (st.x - x) * 0.58, py = y + (st.y - y) * 0.58, q = A(px, py, 15); R(c, q[0] - 2, q[1] - 1, 4, 2, '#f4f1e6'); R(c, q[0] - 1, q[1], 2, 1, '#c9c2a8'); }
+    const sp = A(x, y, 15); R(c, sp[0] - 4, sp[1] - 2, 8, 4, '#2b2f3b'); R(c, sp[0] - 3, sp[1] - 3, 6, 1, '#3a3f4f'); R(c, sp[0] - 1, sp[1] - 2, 2, 1, plan ? (plan.state === 'ready' ? '#6be39b' : '#ffd84a') : '#4a5068');
+  }
+
+  function buildObjects(entries, t, plan) {
     const bySlot = {}; entries.forEach((e) => { bySlot[e.slot] = e; });
     const objs = [];
     for (const s of SLOTS) {
       const ag = bySlot[s.i] || null, res = ag ? { id: ag.id } : { slot: s.i };
+      if (s.mgr) {
+        objs.push({ x0: MS.x - 0.4, y0: 1.1, x1: MS.x + 0.4, y1: 1.78, h: 14, pad: 2, ord: 0, tag: 'chair' + s.i, draw: (c) => drawMgrChair(c), hit: (lx, ly) => inPoly(boxHex(MS.x - 0.4, 1.1, MS.x + 0.4, 1.9, 0, 12), lx, ly), res });
+        objs.push({ x0: MS.x - 0.43, y0: 1.8, x1: MS.x + 0.43, y1: 1.92, h: 24, pad: 2, ord: 3, tag: 'back' + s.i, draw: (c) => drawMgrBack(c), hit: (lx, ly) => inPoly(boxHex(MS.x - 0.43, 1.8, MS.x + 0.43, 1.92, 0, 23), lx, ly), res });
+        const m1 = [sx(6.25, 0.5), sy(6.25, 0.5, 27), 14], m2 = [sx(7.875, 0.5), sy(7.875, 0.5, 30), 14];
+        objs.push({ x0: MD.x0, y0: MD.y0, x1: MD.x1, y1: MD.y1, h: 32, pad: 2, ord: 2, tag: 'desk' + s.i, draw: (c) => drawDesk(c, s, ag, t),
+          hit: (lx, ly) => inPoly(boxHex(MD.x0, MD.y0, MD.x1, MD.y1, 0, DESKZ), lx, ly) || [m1, m2].some((m) => lx >= m[0] && lx < m[0] + m[2] && ly >= m[1] && ly < m[1] + 15), res });
+        continue;
+      }
       const cx0 = s.dx - 0.95, cy0 = s.dy + 0.55, cx1 = s.dx - 0.05, cy1 = s.dy + 1.45;
       objs.push({ x0: cx0, y0: cy0, x1: cx1, y1: cy1, h: 24, pad: 0, ord: 0, tag: 'chair' + s.i, draw: (c) => drawChair(c, s), hit: (lx, ly) => inPoly(boxHex(cx0, cy0, cx1, cy1, 0, 23), lx, ly), res });
-      const mon = [sx(s.dx + 0.125, s.dy + 1.625), sy(s.dx + 0.125, s.dy + 1.625, 28), 12];
+      const mon = [sx(s.dx + 0.74, s.dy + 1.45), sy(s.dx + 0.74, s.dy + 1.45, 29), 14];
       objs.push({ x0: s.dx, y0: s.dy, x1: s.dx + 1, y1: s.dy + 2, h: 29, pad: 0, ord: 2, tag: 'desk' + s.i, draw: (c) => drawDesk(c, s, ag, t),
         hit: (lx, ly) => inPoly(boxHex(s.dx, s.dy, s.dx + 1, s.dy + 2, 0, DESKZ), lx, ly) || (lx >= mon[0] && lx < mon[0] + mon[2] && ly >= mon[1] && ly < mon[1] + 15), res });
     }
     for (const p of PLANTS) objs.push({ x0: p.x + 0.2, y0: p.y + 0.2, x1: p.x + 0.8, y1: p.y + 0.8, h: 34, pad: 8, ord: 0, draw: (c) => plant(c, p.x, p.y), hit: null });
+    objs.push({ x0: TABLE.x - 1.0, y0: TABLE.y - 1.0, x1: TABLE.x + 1.0, y1: TABLE.y + 1.0, h: 20, pad: 10, ord: 0, tag: 'table', draw: (c) => drawTable(c, t, plan), hit: null });
+    for (const st of SEATS) objs.push({ x0: st.x - 0.27, y0: st.y - 0.27, x1: st.x + 0.27, y1: st.y + 0.27, h: 9, pad: 2, ord: 0, tag: 'stool' + st.i, draw: (c) => stool(c, st), hit: null });
     for (const e of entries) {
-      let x, y; const seated = !e.away;
-      if (seated) { const s = SLOTS[e.slot]; x = s.seat.x; y = s.seat.y; } else { x = e.x; y = e.y; }
+      let x, y; const seated = sitting(e);
+      if (seated) { const q = seatAt(e); x = q.x; y = q.y; } else { x = e.x; y = e.y; }
       const ax = sx(x, y), ay = sy(x, y, seated ? SEAT : 0), top = seated ? 26 : 34;
       objs.push({ x0: x - 0.22, y0: y - 0.22, x1: x + 0.22, y1: y + 0.22, h: top, pad: 10, ord: 1, tag: 'person:' + e.id, draw: (c) => renderPerson(c, e, t, seated),
         hit: (lx, ly) => lx >= ax - 8 && lx <= ax + 8 && ly >= ay - top + (seated ? 1 : 0) && ly <= ay + 3, res: { id: e.id }, person: true });
@@ -665,7 +812,7 @@
     }
   }
   function podRing(c, s, col, t, thick) {
-    const x0 = Math.max(s.dx - 1.15, 0.15), y0 = Math.max(s.dy - 0.2, 0.15), x1 = Math.min(s.dx + 1.3, GX - 0.15), y1 = Math.min(s.dy + 2.2, GY - 0.15);
+    const x0 = s.ring.x0, y0 = s.ring.y0, x1 = s.ring.x1, y1 = s.ring.y1;
     const P = [A(x0, y0), A(x1, y0), A(x1, y1), A(x0, y1)];
     const off = t ? Math.floor(t * 8) : 0;
     for (let i = 0; i < 4; i++) { const a = P[i], b = P[(i + 1) % 4]; dline(c, a[0], a[1], b[0], b[1], col, off + i * 3, thick); }
@@ -679,11 +826,27 @@
     }
   }
 
+  // ---------- the plan document floating over the round table ----------
+  const planDocPos = () => [sx(TABLE.x, TABLE.y), sy(TABLE.x, TABLE.y, 66)];
+  function planDoc(c, plan, t) {
+    const [cx0, cy0] = planDocPos(), bob = Math.round(Math.sin(t * 2.4)), ready = plan.state === 'ready', x = cx0, y = cy0 + bob;
+    const ts = A(TABLE.x, TABLE.y, TABLE.h);                       // shadow on the table top
+    c.globalAlpha = 0.25; R(c, ts[0] - 6, ts[1] - 1, 12, 3, '#000'); c.globalAlpha = 1;
+    for (let yy = ts[1] - 3, i = 0; yy > y + 12; yy -= 4, i++) { c.globalAlpha = 0.35 + 0.35 * ((Math.floor(t * 6) + i) % 3 === 0 ? 1 : 0); R(c, x, yy, 1, 2, ready ? '#6be39b' : '#ffd84a'); }
+    c.globalAlpha = 1;
+    R(c, x - 8, y - 11, 17, 22, '#161827'); R(c, x - 7, y - 10, 15, 20, ready ? '#fffbe8' : '#f6efd2'); R(c, x - 7, y - 10, 15, 3, ready ? '#6be39b' : '#ffd84a');
+    R(c, x + 4, y - 10, 4, 4, '#161827'); R(c, x + 5, y - 9, 2, 2, '#c9c2a8');
+    const k = ready ? 5 : 1 + Math.floor(t * 2) % 5;
+    for (let i = 0; i < 5; i++) if (i < k) { R(c, x - 5, y - 4 + i * 3, 2, 2, ready || i < k - 1 ? '#30a46c' : '#9a8f6a'); R(c, x - 2, y - 4 + i * 3, 7 - (i % 2) * 2, 1, '#9a8f6a'); }
+    if (ready) { R(c, x + 4, y + 5, 8, 8, '#161827'); R(c, x + 5, y + 6, 6, 6, '#30a46c'); [[6, 9], [7, 10], [8, 9], [9, 8], [10, 7]].forEach(([a, b]) => R(c, x + a, y + b - 1, 1, 2, '#fff')); }
+    else for (let i = 0; i < 3; i++) { const f = (t * 2 + i * 0.33) % 1; c.globalAlpha = 1 - f; R(c, x - 12 + i * 12, y - 15 - Math.round(f * 3), 2, 2, '#ffd84a'); c.globalAlpha = 1; }
+  }
+
   // ---------- main ----------
   const bg = buildBackground();
   const logical = mk(W, H), lc = logical.getContext('2d');
-  const labelPt = (e) => { const s = SLOTS[e.slot !== undefined ? e.slot : e.i]; return [sx(s.dx - 0.45, s.dy + 1.75), sy(s.dx - 0.45, s.dy + 1.75, 0) + 6]; };
-  const personAnchor = (e) => { if (!e.away) { const s = SLOTS[e.slot]; return { ax: sx(s.seat.x, s.seat.y), ay: sy(s.seat.x, s.seat.y, SEAT), head: sy(s.seat.x, s.seat.y, SEAT) - 24 }; } return { ax: sx(e.x, e.y), ay: sy(e.x, e.y, 0), head: sy(e.x, e.y, 0) - 32 }; };
+  const labelPt = (e) => { const s = SLOTS[e.slot !== undefined ? e.slot : e.i]; return [sx(s.lab.x, s.lab.y), sy(s.lab.x, s.lab.y, 0) + 6]; };
+  const personAnchor = (e) => { if (sitting(e)) { const s = seatAt(e); return { ax: sx(s.x, s.y), ay: sy(s.x, s.y, SEAT), head: sy(s.x, s.y, SEAT) - 24 }; } return { ax: sx(e.x, e.y), ay: sy(e.x, e.y, 0), head: sy(e.x, e.y, 0) - 32 }; };
 
   /** scene: {t, entries:[{id,name,type,slot,look,state,tool,phase,away,x,y,face,mode,bubble,act,actP,talk,talkDir,queued}], selectedId, hoverId, hoverSlot} */
   function render(canvas, S, U, scene) {
@@ -691,10 +854,17 @@
     lc.clearRect(0, 0, W, H);
     lc.drawImage(bg, 0, 0);
     const bySlot = {}; entries.forEach((e) => { bySlot[e.slot] = e; });
+    // meeting: a glowing ring on the floor around the round table while a plan is being made
+    const plan = scene.plan || null;
+    if (plan) {
+      const tx = sx(TABLE.x, TABLE.y), ty = sy(TABLE.x, TABLE.y, 0), col = plan.state === 'ready' ? '#6be39b' : '#ffd84a';
+      lc.globalAlpha = 0.12 + 0.06 * Math.sin(t * 4); poly(lc, Array.from({ length: 48 }, (_, k) => A(TABLE.x + 2.35 * Math.cos(k / 48 * Math.PI * 2), TABLE.y + 2.35 * Math.sin(k / 48 * Math.PI * 2), 0)), col); lc.globalAlpha = 1;
+      ellipseRing(lc, tx, ty, Math.round(22.6 * 2.4), Math.round(11.3 * 2.4), col, t, 1);
+    }
     // floor-level outlines first so furniture and people cover them where they should
     for (const e of entries) {
       const s = SLOTS[e.slot];
-      if (e.id === scene.selectedId) { podRing(lc, s, '#f5c542', t, 1); if (e.away) { const p = personAnchor(e); ellipseRing(lc, p.ax, p.ay, 13, 6, '#f5c542', t, 1); } }
+      if (e.id === scene.selectedId) { podRing(lc, s, '#f5c542', t, 1); if (e.away || e.meet) { const p = personAnchor(e); ellipseRing(lc, p.ax, p.ay - (e.meet ? SEAT : 0), 13, 6, '#f5c542', t, 1); } }
       else if (e.id === scene.hoverId) { podRing(lc, s, 'rgba(255,255,255,.8)', 0, 1); if (e.away) { const p = personAnchor(e); ellipseRing(lc, p.ax, p.ay, 13, 6, 'rgba(255,255,255,.8)', 0, 1); } }
     }
     if (scene.hoverSlot != null && !bySlot[scene.hoverSlot]) podRing(lc, SLOTS[scene.hoverSlot], 'rgba(95,242,165,.9)', 0, 1);
@@ -703,7 +873,7 @@
     const ph8 = Math.floor(t * 8), lane = {}, byLead = {};
     for (const e of entries) if (e.help) (byLead[e.help.parentId] = byLead[e.help.parentId] || []).push(e);
     for (const k in byLead) byLead[k].sort((p, q) => p.slot - q.slot).forEach((e, i) => { lane[e.id] = (i - (byLead[k].length - 1) / 2) * 0.1; });
-    const pad = (sl, col, al) => { const s = SLOTS[sl], x = (s.row ? FRONT1 : AISLE), y = s.dy + 1; lc.globalAlpha = al; poly(lc, [A(x - 0.4, y - 0.4, 0), A(x + 0.4, y - 0.4, 0), A(x + 0.4, y + 0.4, 0), A(x - 0.4, y + 0.4, 0)], col); lc.globalAlpha = 1; };
+    const pad = (sl, col, al) => { const s = SLOTS[sl], x = s.px, y = s.py; lc.globalAlpha = al; poly(lc, [A(x - 0.4, y - 0.4, 0), A(x + 0.4, y - 0.4, 0), A(x + 0.4, y + 0.4, 0), A(x - 0.4, y + 0.4, 0)], col); lc.globalAlpha = 1; };
     const polyDots = (pts, col, ph) => { for (let i = 1; i < pts.length; i++) dotLine(lc, Math.round(pts[i - 1][0]), Math.round(pts[i - 1][1]), Math.round(pts[i][0]), Math.round(pts[i][1]), col, ph + i * 2, 2); };
     for (const e of entries) {
       if (e.huddle != null && !e.away) podRing(lc, SLOTS[e.slot], '#f5c542', t, 1);
@@ -724,7 +894,7 @@
       lc.globalAlpha = 0.6 * (1 - p / 12); R(lc, bx + Math.sin(t * 2 + i * 2) * 1.5 - 1 + i * 2, by - p, 2, 2, '#fff');
     }
     lc.globalAlpha = 1;
-    for (const o of sortObjs(buildObjects(entries, t))) o.draw(lc);
+    for (const o of sortObjs(buildObjects(entries, t, plan))) o.draw(lc);
     // state icons, role badges, talk bubbles sit above everything
     for (const e of entries) {
       const p = personAnchor(e), h = e.help;
@@ -736,10 +906,17 @@
         if (e.talk != null) drawTalk(lc, p.ax + e.talkDir * 6, p.head - 2, e.talk, e.talkDir);
         continue;
       }
+      if (e.meet) {                                    // at the round table: thinking bubbles in turn while the plan is being made
+        if (plan && plan.state === 'planning' && e.id !== plan.ownerId) { const k = Math.floor(t * 0.7 + e.phase * 9 + e.slot) % 3; if (k < 2) drawTalk(lc, p.ax + 6, p.head - 2, k ? 2 : 0, 1); }
+        else if (plan && plan.state === 'ready') { if (Math.floor(t * 0.8 + e.slot) % 2) drawTalk(lc, p.ax + 6, p.head - 2, 1, 1); }
+        else stateIcon(lc, p.ax, p.head, e.state, t);
+        continue;
+      }
       if (!e.away) stateIcon(lc, p.ax, p.head, e.state, t);
       else { stateIcon(lc, p.ax, p.head + 2, e.state, t); if (e.mode === 'chat' && e.talk != null) drawTalk(lc, p.ax + e.talkDir * 6, p.head - 2, e.talk, e.talkDir); }
     }
     for (const e of entries) if (e.planAge != null && !e.away) { const p = personAnchor(e); clipboardIcon(lc, p.ax + 17, p.head + 1 + Math.round(Math.sin(t * 3)), t); }
+    if (plan) planDoc(lc, plan, t);
     for (const f of scene.flights || []) {
       if (f.p < 0 || f.p > 1) continue;
       let sa, sb, off, kc = '#6cb6ff', draw;
@@ -785,7 +962,7 @@
       // tool chip floats just above the head (over the monitor it would cover the face)
       if (!e.away && e.huddle != null) pillText(ctx, 'team wrap-up', p.ax * S, (p.head - 5) * S, U * 0.9, '#2a1f00', '#f5c542', true);
       else if (!e.away && e.waiting > 0) pillText(ctx, 'waiting on ' + e.waiting + ' helper' + (e.waiting > 1 ? 's' : '') + '.'.repeat(1 + Math.floor(t * 2) % 3), p.ax * S, (p.head - 5) * S, U * 0.9, '#2a1f00', '#f5c542', true);
-      else if (!e.away && e.state === 'working') pillText(ctx, e.tool || 'typing…', p.ax * S, (p.head - 5) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
+      else if ((!e.away || e.meet) && e.state === 'working') pillText(ctx, e.tool || 'typing…', p.ax * S, (p.head - 5) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
       if (e.help && !e.away && e.help.desk) {       // "helping <lead>" tag under the name pill
         pillText(ctx, 'helping ' + e.help.parentName + ' · ' + e.help.role, labX * S, (lp[1] + 11) * S, U * 0.72, '#14151f', roleCol(e.help.role), true);
       }
@@ -799,6 +976,12 @@
     }
     const bubs = [];
     for (const e of entries) { const bub = e.help && e.help.say ? e.help.say : e.bubble; if (bub) bubs.push({ e, bub, p: personAnchor(e), w: Math.min(Math.max(120 * U, 46 * S) + 12 * U, bub.length * 6.6 * U + 14 * U) }); }
+    if (plan) {
+      const dp = planDocPos(), pw = (plan.state === 'ready' ? 'PLAN READY' : 'planning…');
+      pillText(ctx, plan.state === 'ready' ? '✓ PLAN READY' : pw, dp[0] * S, (dp[1] - 25) * S, U * 0.95, plan.state === 'ready' ? '#0e2a1a' : '#2a1f00', plan.state === 'ready' ? '#6be39b' : '#ffd84a', true);
+      const psum = plan.summary && plan.summary.length > 72 ? plan.summary.slice(0, 69) + '…' : plan.summary;
+      if (psum && plan.state === 'ready') bubs.push({ e: null, bub: psum, p: { ax: dp[0], head: dp[1] - 15 }, w: Math.min(Math.max(120 * U, 46 * S) + 12 * U, psum.length * 6.6 * U + 14 * U) });
+    }
     bubs.sort((a, b) => a.p.ax - b.p.ax);
     const placed = [];
     for (const b of bubs) {
@@ -815,7 +998,7 @@
 
   /** logical-pixel hit test: front-most object first (same order as drawing). -> {id} | {slot} | null */
   function hitTest(lx, ly, entries) {
-    const list = sortObjs(buildObjects(entries, 0));
+    const list = sortObjs(buildObjects(entries, 0, null));
     for (let i = list.length - 1; i >= 0; i--) { const o = list[i]; if (o.hit && o.hit(lx, ly)) return o.res; }
     return null;
   }
@@ -823,9 +1006,10 @@
   window.OfficeIso = {
     W, H, SLOTS, MAX_SLOTS, render, hitTest, walkPath, SPOTS, SPEED, STEP: 1,
     drawAvatar: F.drawAvatar, GX, GY, isBlocked, project: (x, y, z) => [sx(x, y), sy(x, y, z || 0)],
-    deskPoint: (slot) => { const s = SLOTS[slot]; return [sx(s.dx + 0.5, s.dy + 1), sy(s.dx + 0.5, s.dy + 1, DESKZ)]; },
+    deskPoint: (slot) => { const s = SLOTS[slot]; return [sx(s.desk.x, s.desk.y), sy(s.desk.x, s.desk.y, DESKZ)]; },
+    TABLE, SEATS, MGR, MD, tablePoint: () => [sx(TABLE.x, TABLE.y), sy(TABLE.x, TABLE.y, TABLE.h)],
     labelPoint: labelPt,
     deskRoute, kindCol, roleCol, roleBadge, ROLE_COL, walkBetween,
-    drawOrder: (entries) => sortObjs(buildObjects(entries, 0)).map((o) => o.tag || 'other'),   // for tests
+    drawOrder: (entries) => sortObjs(buildObjects(entries, 0, null)).map((o) => o.tag || 'other'),   // for tests
   };
 })();
