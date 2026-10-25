@@ -46,6 +46,7 @@ or the mock's simulated team) the helpers are **the people who already work in t
 ![peer talk](screenshots/16-team-peer-conversation.png)
 ![huddle](screenshots/17-team-huddle.png)
 ![handoff](screenshots/18-team-result-handoff.png)
+![walking back](screenshots/20-team-helper-walking-back.png)
 
 * **Who helps:** each subagent is assigned to an existing colleague, **idle ones first** (fewest times helped first). If nobody is idle a new regular,
   persistent agent is **auto-hired** (max 8 desks, mock type) at a free desk and **walks in through the entrance door** (no pop-in). If the office is
@@ -242,10 +243,10 @@ npm run screenshots     # uses the fake claude/cursor CLIs so all agent types ap
 
 Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, wandering, coffee break, fire),
 `10-idle-stretch-read-look`, `11`/`11b-idle-chat-at-coffee`, `12-hire-dialog-agent-type`, `13-flat-view-fallback` (`?view=flat`),
-`14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`. (`07-wandering` is the walking agent.)
+`14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`, `20-team-helper-walking-back`. (`07-wandering` is the walking agent.)
 
 **HD shots:** `npm run screenshots:hd` renders a 1920×1080 viewport at deviceScaleFactor 2 and saves 3840×2160 PNGs to `screenshots/hd/`
-(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`08` team: /code-review with 4 helpers, peer conversation, huddle, result handoff). The canvas backing store is in device pixels with an integer
+(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`09` team: /code-review with 4 helpers, peer conversation, huddle, result handoff, helper walking back). The canvas backing store is in device pixels with an integer
 scale (×7 at DPR 2), so nothing is resampled; the script asserts this before capturing. Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
 
 ## Known limitations / ideas
