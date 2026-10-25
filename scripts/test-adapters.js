@@ -117,6 +117,44 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   await sleep(300);
   assert(log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'end').every((m) => !m.sub.ok) && log.slice(mark).filter((m) => m.type === 'agent' && m.agent.id === ids.Moc.id).at(-1).agent.subs.length === 0, 'interrupt ends running helpers (ok:false) and clears the list');
 
+  // ---------- team collaboration: roles, existing people as helpers, inferred peer talk, huddle ----------
+  const lastAgent = (id) => log.filter((m) => m.type === 'agent' && m.agent.id === id).at(-1).agent;
+  const agentsNow = () => Object.fromEntries([...new Set(log.filter((m) => m.type === 'agent').map((m) => m.agent.id))].map((id) => [id, lastAgent(id)]));
+  await waitFor(() => Object.values(agentsNow()).every((a) => a.state === 'idle' || a.state === 'done' || a.state === 'error'), 20000);
+  await sleep(4500 + 1500);   // let released helpers from the earlier tests become free again
+  mark = log.length;
+  const before = new Set(Object.keys(agentsNow()));
+  ws.send(JSON.stringify({ type: 'send', id: ids.Cla.id, text: '/code-review the auth change' }));
+  await waitFor(() => log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'start').length === 4, 20000);
+  const cstarts = log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'start');
+  assert(cstarts.map((m) => m.sub.role).join() === 'security,performance,tests,style', 'roles derived from subagent_type/description: ' + cstarts.map((m) => m.sub.role).join());
+  const hids = cstarts.map((m) => m.sub.helperId);
+  assert(hids.every(Boolean) && new Set(hids).size === 4 && !hids.includes(ids.Cla.id), 'each helper job is given to a different EXISTING/colleague person (not the lead)');
+  const hired = hids.filter((id) => !before.has(id));
+  assert(hired.length <= 1 && hired.every((id) => log.some((m) => m.type === 'agent' && m.isNew && m.enter && m.agent.id === id && m.agent.helping)), 'only when nobody was idle a new person is hired (enter=true, already helping): ' + hired.length);
+  assert(hids.every((id, i) => { const ag = log.slice(mark).filter((m) => m.type === 'agent' && m.agent.id === id && m.agent.helping).at(0); return ag && ag.agent.helping.parentName === 'Cla' && ag.agent.helping.role === cstarts[i].sub.role; }), 'helpers get a "helping Cla" status with their role');
+  // a real user message to a person who is helping waits (queued) until the helper job ends
+  ws.send(JSON.stringify({ type: 'send', id: hids[0], text: 'hello helper, when you are free' }));
+  await waitFor(() => log.slice(mark).some((m) => m.type === 'agent' && m.agent.id === hids[0] && m.agent.queued >= 1 && m.agent.helping), 3000);
+  assert(log.slice(mark).filter((m) => m.type === 'agent' && m.agent.id === hids[0] && m.agent.helping).every((m) => m.agent.state === 'idle'), 'helper keeps idle state while helping; user message is queued (queued pill), not run');
+  await waitFor(() => log.slice(mark).some((m) => m.type === 'agent' && m.agent.id === ids.Cla.id && m.agent.state === 'done'), 30000);
+  await waitFor(() => log.slice(mark).some((m) => m.type === 'agent' && m.agent.id === hids[0] && m.agent.state === 'done'), 30000);
+  assert(true, 'queued message to the helper runs after the helper job ended');
+  const team = log.slice(mark).filter((m) => m.type === 'team' && m.id === ids.Cla.id && m.entry).map((m) => m.entry);
+  const kinds = team.map((e) => e.kind);
+  assert(kinds[0] === 'plan' && kinds.filter((k) => k === 'handoff').length === 4 && kinds.at(-1) === 'huddle', 'team feed: plan first, 4 handoffs, huddle last: ' + kinds.join());
+  assert(team.some((e) => e.kind === 'peer' && e.inferred && /shared (auth|api)\.js/.test(e.text) && e.from.helperId && e.to.helperId), 'inferred peer talk: helpers touching the same file within the window (flagged inferred)');
+  assert(team.filter((e) => e.kind === 'peer').length <= 6 && team.filter((e) => e.kind === 'peer').length >= 1, 'peer bubbles are throttled (<= 6 per run): ' + team.filter((e) => e.kind === 'peer').length);
+  assert(team.some((e) => e.kind === 'mention' && e.inferred && e.from.role === 'security' && e.to.role === 'tests'), 'inferred letter: security result mentioning tests -> tests helper');
+  assert(team.filter((e) => e.kind === 'peer' || e.kind === 'mention').every((e) => e.inferred === true) && team.filter((e) => e.kind === 'handoff' || e.kind === 'plan').every((e) => !e.inferred), 'only the inferred interactions are marked inferred');
+  const hand = team.filter((e) => e.kind === 'handoff');
+  assert(hand.find((e) => e.from.role === 'security').short === 'found 3 issues' && hand.find((e) => e.from.role === 'style').ok === false, 'handoff carries a short summary ("found 3 issues") and ok flag (style helper failed)');
+  assert(/4 reports in, 1 failed/.test(team.at(-1).text), 'huddle summary: ' + team.at(-1).text);
+  const sys = log.slice(mark).filter((m) => m.type === 'msg' && m.id === hids[1] && m.msg.role === 'system' && /^helped Cla: Performance analysis/.test(m.msg.text));
+  assert(sys.length === 1 && !log.slice(mark).some((m) => m.type === 'msg' && m.id === hids[1] && m.msg.role === 'sub'), "helper's own transcript only gets a 'helped Cla: …' system line (no sub lines)");
+  assert(hids.every((id) => lastAgent(id).helping === null), 'helpers are released afterwards (helping=null)');
+  assert(log.slice(mark).filter((m) => m.type === 'team' && m.reset).length >= 1, 'team feed resets per run');
+
   // agent-to-agent message
   mark = log.length;
   ws.send(JSON.stringify({ type: 'relay', from: ids.Moc.id, to: ids.Cur.id, text: 'can you review my diff?' }));
@@ -128,6 +166,29 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   assert(true, 'relay: sending to yourself is rejected');
   await waitFor(() => log.slice(mark).some((m) => m.type === 'agent' && m.agent.id === ids.Cur.id && m.agent.state === 'done'), 20000);
   ws.close(); await sleep(500); srv.kill('SIGTERM'); await sleep(500);
+
+  // ---------- in-process: office full -> helper job waits; freed person picks it up ----------
+  {
+    const { Harness } = require('../lib/harness');
+    const stub = { defaultType: 'mock', types: { mock: { id: 'mock', label: 'Mock', available: true, adapter: { run() { return { cancel() {} }; } } } } };
+    const h = new Harness({ dataFile: path.join(os.tmpdir(), `mai-office-unit-${Date.now()}.json`), registry: stub });
+    const names = ['P', 'A', 'B', 'C', 'D', 'E', 'F', 'G'];
+    const ag = names.map((n) => h.hire({ name: n, cwd: '/tmp', agentType: 'mock' }));
+    const evs = []; h.on('event', (e) => evs.push(e));
+    for (const a of ag.slice(1)) h.send(a.id, 'busy');           // everybody but the lead is working: nobody idle, office full (8)
+    h.send(ag[0].id, 'lead'); const lead = h.agents.get(ag[0].id);
+    h._onEvent(lead, lead.run, { type: 'subagent_start', subId: 's1', label: 'security review', kind: 'security-reviewer' });
+    const st = evs.find((e) => e.type === 'subagent' && e.op === 'start');
+    assert(st && st.sub.helperId === null && st.sub.role === 'security', 'office full + nobody idle: helper job is pending (no helper yet)');
+    assert(evs.some((e) => e.type === 'team' && e.entry && e.entry.kind === 'note' && /waiting for a free colleague/.test(e.entry.text)), 'pending job is shown in the team feed');
+    h.interrupt(ag[3].id);                                       // somebody becomes free
+    await sleep(100);
+    const asg = evs.find((e) => e.type === 'subagent' && e.op === 'assign');
+    assert(asg && asg.sub.helperId === ag[3].id && h.agents.get(ag[3].id).helping.parentName === 'P', 'a freed-up person picks up the pending job');
+    h._onEvent(lead, lead.run, { type: 'subagent_end', subId: 's1', ok: true, text: 'Found 1 issue' });
+    assert(h.agents.get(ag[3].id).helping === null, 'helper released at job end');
+    h.shutdown();
+  }
 
   // persistence of type
   srv = startServer({ HARNESS_MODE: 'mock' }); await sleep(1000);

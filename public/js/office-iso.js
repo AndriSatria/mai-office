@@ -34,6 +34,7 @@
   const SPOTS = {
     coffee: [{ x: 9.5, y: 1.5, face: 1 }],
     chat: [{ x: 8.5, y: 3.5, face: 0 }, { x: 9.5, y: 3.5, face: 2 }],
+    door: { x: 0.5, y: 4.7, face: 0 },
   };
 
   // blocked[y][x]: furniture the pathfinder must avoid
@@ -71,6 +72,38 @@
     const out = [pts[0]];
     for (let i = 1; i < pts.length - 1; i++) { // drop collinear middles
       const a = out[out.length - 1], b = pts[i], c = pts[i + 1];
+      if (Math.abs((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)) > 1e-6) out.push(b);
+    }
+    out.push(pts[pts.length - 1]);
+    return out;
+  }
+
+  /** Path between two arbitrary world points over the tile grid (start tile may be furniture, e.g. a chair). */
+  function walkBetween(from, to) {
+    const key = (x, y) => y * GX + x;
+    const sx0 = Math.max(0, Math.min(GX - 1, Math.floor(from.x))), sy0 = Math.max(0, Math.min(GY - 1, Math.floor(from.y)));
+    const gx = Math.floor(to.x), gy = Math.floor(to.y);
+    const prev = new Map([[key(sx0, sy0), -1]]), q = [[sx0, sy0]];
+    const D = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    let found = false;
+    while (q.length) {
+      const [x, y] = q.shift();
+      if (x === gx && y === gy) { found = true; break; }
+      for (const [dx, dy] of D) {
+        const nx = x + dx, ny = y + dy;
+        if (isBlocked(nx, ny) || prev.has(key(nx, ny))) continue;
+        prev.set(key(nx, ny), key(x, y)); q.push([nx, ny]);
+      }
+    }
+    const tiles = [];
+    if (found) { for (let k = key(gx, gy); k !== -1; k = prev.get(k)) tiles.unshift([k % GX, Math.floor(k / GX)]); }
+    const pts = [{ x: from.x, y: from.y }];
+    for (const [x, y] of tiles) pts.push({ x: x + 0.5, y: y + 0.5 });
+    pts.push({ x: to.x, y: to.y });
+    const out = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+      const a = out[out.length - 1], b = pts[i], c = pts[i + 1];
+      if (Math.hypot(b.x - a.x, b.y - a.y) < 0.05) continue;
       if (Math.abs((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x)) > 1e-6) out.push(b);
     }
     out.push(pts[pts.length - 1]);
@@ -171,6 +204,7 @@
     rug(RUG.x0 + 0.12, RUG.y0 + 0.12, RUG.x1 - 0.12, RUG.y1 - 0.12, '#a45560');
     rug(RUG.x0 + 0.38, RUG.y0 + 0.38, RUG.x1 - 0.38, RUG.y1 - 0.38, '#8d4650');
     for (let k = 0; k < 6; k++) rug(RUG.x0 + 0.5 + k * 0.4, RUG.y0 + 0.5, RUG.x0 + 0.62 + k * 0.4, RUG.y1 - 0.5, '#a45560');
+    rug(0.05, 4.1, 0.95, 5.3, '#4a3a33'); rug(0.12, 4.18, 0.88, 5.22, '#6b5448');
     rug(RUG.x0 + 0.62, RUG.y0 + 0.62, RUG.x1 - 0.62, RUG.y0 + 0.74, '#d9a86b'); rug(RUG.x0 + 0.62, RUG.y1 - 0.74, RUG.x1 - 0.62, RUG.y1 - 0.62, '#d9a86b');
 
     // ----- back walls -----
@@ -191,7 +225,11 @@
     box(c, -0.25, -0.25, 0, 0, WH - 3, WH, trim);
     // windows
     window3(c, ...RW, 20, 30, 20, 26); window3(c, ...RW, 62, 30, 20, 26);
-    window3(c, ...LW, 20, 30, 20, 26); window3(c, ...LW, 62, 30, 20, 26);
+    window3(c, ...LW, 20, 30, 20, 26);
+    // entrance door (left wall): where auto-hired people walk in
+    pr(c, ...LW, 60, 88, 0, 47, '#2b2018'); pr(c, ...LW, 62, 86, 0, 45, '#8b5a34'); pr(c, ...LW, 62, 74, 0, 45, '#7a4e2c');
+    pr(c, ...LW, 65, 83, 25, 41, '#a06a3e'); pr(c, ...LW, 65, 83, 5, 21, '#a06a3e'); pr(c, ...LW, 66, 82, 26, 40, '#935f37'); pr(c, ...LW, 66, 82, 6, 20, '#935f37');
+    pr(c, ...LW, 80, 83, 21, 24, '#f5c542');
     // poster (right wall) + whiteboard & poster (left wall)
     pr(c, ...RW, 104, 124, 22, 46, '#2b3149'); pr(c, ...RW, 105, 123, 23, 45, '#f2e6c8');
     pr(c, ...RW, 108, 120, 34, 42, '#3e8ef7'); pr(c, ...RW, 110, 114, 34, 38, '#30a46c'); pr(c, ...RW, 115, 119, 36, 41, '#f5a524');
@@ -409,20 +447,39 @@
   }
 
   function drawStanding(c, ag, t, face, ret) {
-    const look = ag.look, walking = ag.mode === 'walk', front = face < 2;
-    const fr = walking ? Math.floor(t * 7 + ag.phase * 3) % 4 : 0, bob = walking && (fr & 1) ? 1 : 0;
+    const look = ag.look, walking = ag.mode === 'walk', front = face < 2, hp = ag.help || null;
+    const pose = hp && ag.mode === 'help' ? hp.pose : null;      // 'work' | 'cheer' | 'worry' | 'wait'
+    const fr = walking ? Math.floor(t * 7 + ag.phase * 3) % 4 : 0;
+    const hop = pose === 'cheer' ? Math.floor(Math.abs(Math.sin(t * 7 + ag.phase)) * 2) : 0;
+    const bob = (walking && (fr & 1) ? 1 : 0) + hop;
     const la = fr === 1 ? 2 : 0, lb = fr === 3 ? 2 : 0;
-    const mood = ag.state === 'error' ? 'worried' : (ag.mode === 'drink' || ag.mode === 'chat') ? 'happy' : 'normal';
+    const mood = ag.state === 'error' || pose === 'worry' ? 'worried' : (ag.mode === 'drink' || ag.mode === 'chat' || pose === 'cheer') ? 'happy' : 'normal';
     const blink = ((t * 1000 + ag.phase * 3600) % 3600) < 140;
     R(c, -3, -10, 3, 8 - la, look.pants); R(c, 1, -10, 3, 8 - lb, look.pants);
     R(c, -4, -2 - la, 4, 2, shoes); R(c, 0, -2 - lb, 4, 2, shoes);
     torso(c, look, -20 - bob, 10 + bob, front, look.pants);
-    const nod = ag.mode === 'chat' && ag.talk == null && Math.floor(t * 3) % 4 === 0 ? 1 : 0;
+    if (hp) { // role lanyard + ID card (the person keeps their own look)
+      const rc = roleCol(hp.role);
+      if (front) { R(c, -2, -20 - bob, 1, 4, rc); R(c, 2, -20 - bob, 1, 4, rc); R(c, -1, -17 - bob, 3, 1, rc); R(c, -1, -16 - bob, 3, 3, '#fff'); R(c, -1, -16 - bob, 3, 1, rc); R(c, 0, -14 - bob, 1, 1, '#555'); }
+      else R(c, -3, -20 - bob, 7, 1, rc);
+    }
+    const f = Math.floor(t * 8 + ag.phase * 5);
+    if (pose === 'work' && front) { // little tablet with a live screen
+      R(c, -5, -18, 10, 7, '#161827'); R(c, -4, -17, 8, 5, '#0e2a3a');
+      for (let i = 0; i < 3; i++) R(c, -3, -16 + i * 2 - (i === 2 ? 1 : 0), 2 + ((f + i * 2) % 4), 1, i === 1 ? '#5ff2a5' : '#6cb6ff');
+    }
+    const nod = (ag.mode === 'chat' || pose === 'work') && ag.talk == null && Math.floor(t * 3) % 4 === 0 ? 1 : 0;
     head(c, look, -30 - bob + nod, front, { blink, mood });
     const sw = walking ? (fr === 1 ? 1 : fr === 3 ? -1 : 0) : 0;
     let N = [-5, -9 + sw * 2], Fh = [5, -9 - sw * 2];
     if (ag.mode === 'drink') { const sip = Math.floor(t * 1.5) % 2; Fh = [4, -17 - (sip ? 3 : 0)]; N = [-5, -9]; ret.mug = [Fh[0], Fh[1] - 6]; }
     else if (ag.mode === 'chat') { if (ag.talk != null) { const g = Math.floor(t * 4) % 2; Fh = [ag.talkDir > 0 ? 8 : 6, -19 - g * 3]; } N = [-5, -9]; }
+    else if (pose === 'cheer') { N = [-9, -32 - hop]; Fh = [9, -32 - hop]; }
+    else if (pose === 'worry') { const j = Math.floor(t * 8) % 2; N = [-6, -10 - j]; Fh = [6, -10 + j]; }
+    else if (pose === 'work') {
+      if (front) { N = [-5, -12]; Fh = [5, -12]; } else { N = [-4, -12 + (f % 2)]; Fh = [4, -12 + ((f + 1) % 2)]; }
+      if (ag.talk != null) { const g = Math.floor(t * 4) % 2; Fh = [ag.talkDir > 0 ? 8 : 6, -19 - g * 3]; }
+    } else if (pose === 'wait' && ag.talk != null) { const g = Math.floor(t * 4) % 2; Fh = [ag.talkDir > 0 ? 8 : 6, -19 - g * 3]; }
     limb(c, 4, -18 - bob, Fh[0], Fh[1], look, 1, true);
     limb(c, -4, -18 - bob, N[0], N[1], look, -1, false);
     if (ag.mode === 'drink') { const hx = Fh[0], hy = Fh[1]; R(c, hx - 2, hy - 5, 5, 5, '#f5f5f0'); R(c, hx + 3, hy - 4, 1, 3, '#f5f5f0'); R(c, hx - 2, hy - 5, 5, 1, '#5b3a1e'); }
@@ -458,76 +515,48 @@
   }
 
 
-  // ---------- helpers (subagents): small "junior" people, handoff icons, dotted links ----------
-  const KIND_COL = ['#5ff2a5', '#6cb6ff', '#f5c542', '#ff8fa3', '#c49bff', '#ffa657'];
-  const KIND_FIXED = { explore: 1, bash: 2, shell: 2, 'code-reviewer': 4, reviewer: 4, docs: 0, 'general-purpose': 5, general: 5 };
-  const LANYARD = ['#ff4d6d', '#ffd23f', '#3ddc97', '#4d9de0', '#ee7bff', '#ff8c42'];
-  function kindIdx(kind) {
-    const k = String(kind || '').toLowerCase();
-    if (KIND_FIXED[k] !== undefined) return KIND_FIXED[k];
-    let h = 0; for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0;
-    return h % KIND_COL.length;
+  // ---------- team collaboration: roles, helper spots, handoff icons, dotted links ----------
+  const ROLE_COL = { security: '#ff6b6b', performance: '#ffb02e', tests: '#5ff2a5', style: '#c49bff', docs: '#6cb6ff', architecture: '#ff8fa3', explore: '#4dd0e1', general: '#cfd6e6' };
+  const ROLE_ICO = {
+    security: ['..###..', '.#####.', '#######', '#######', '.#####.', '..###..', '...#...'],
+    performance: ['....##.', '...##..', '..##...', '.#####.', '...##..', '..##...', '.##....'],
+    tests: ['.......', '......#', '.....##', '#...##.', '##.##..', '.###...', '..#....'],
+    style: ['...#...', '...#...', '.#####.', '..###..', '.#####.', '...#...', '...#...'],
+    docs: ['.#####.', '.#...#.', '.#####.', '.#...#.', '.#####.', '.#...#.', '.#####.'],
+    architecture: ['...#...', '..###..', '..#.#..', '.#####.', '.#...#.', '#######', '#.....#'],
+    explore: ['.###...', '#...#..', '#...#..', '#...#..', '.###...', '....##.', '.....##'],
+    general: ['..#.#..', '.#####.', '##...##', '.#...#.', '##...##', '.#####.', '..#.#..'],
+  };
+  const roleCol = (r) => ROLE_COL[r] || ROLE_COL.general;
+  const kindCol = roleCol;
+  function roleBadge(c, x, y, role) { // 9x9 role icon, top-left at x,y
+    const col = roleCol(role), ico = ROLE_ICO[role] || ROLE_ICO.general;
+    R(c, x, y, 9, 9, '#161827'); R(c, x + 1, y + 1, 7, 7, col); R(c, x + 1, y + 1, 7, 1, shade(col, 35));
+    for (let r = 0; r < 7; r++) for (let q = 0; q < 7; q++) if (ico[r][q] === '#') R(c, x + 1 + q, y + 1 + r, 1, 1, '#161827');
   }
-  const kindCol = (kind) => KIND_COL[kindIdx(kind)];
+  function clipboardIcon(c, x, y, t) { // clipboard with ticking lines (the lead announcing the plan)
+    x = Math.round(x); y = Math.round(y);
+    R(c, x - 6, y - 8, 13, 17, '#161827'); R(c, x - 5, y - 7, 11, 15, '#c9a26b'); R(c, x - 4, y - 5, 9, 12, '#fffbe8'); R(c, x - 2, y - 9, 5, 3, '#8b90ad'); R(c, x - 1, y - 9, 3, 1, '#161827');
+    const k = Math.floor(t * 2) % 4;
+    for (let i = 0; i < 3; i++) { R(c, x - 3, y - 3 + i * 4, 1, 1, i < k ? '#30a46c' : '#9a8f6a'); R(c, x - 1, y - 3 + i * 4, 5, 1, '#9a8f6a'); }
+  }
   const faceToward = (fx, fy, tx, ty) => { const dx = tx - fx, dy = ty - fy; return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3); };
 
-  /** Standing spots for a parent's helpers, best first: behind the chair (their face is visible), then beside the desk's far end, then the other sides.
-   *  Only tiles that are not furniture; the caller skips spots other helpers already use. */
+  /** Standing spots around a lead's desk for visiting helpers, best first. Every walkable tile within ~4 tiles of the chair is a candidate, scored by
+   *  how close to a comfortable 2.4 tiles it is, with a penalty for tiles that would stand right in front of the lead and hide them on screen.
+   *  The caller (app.js) skips spots that are in use and spreads people out. At least 5 per desk. */
   function helperSpots(slot) {
-    const s = SLOTS[slot], out = [], seen = new Set();
-    const cand = [[-1.5, 1.5], [-1.5, 2.5], [1.5, 1.5], [1.5, 0.5], [-1.5, 0.5], [1.5, 2.5], [0.5, 2.5], [-0.5, 2.5], [2.5, 1.5], [2.5, 0.5], [2.5, 2.5], [-2.5, 1.5], [-2.5, 2.5], [-2.5, 0.5]];
-    for (const [ox, oy] of cand) {
-      const x = s.dx + ox, y = s.dy + oy, tx = Math.floor(x), ty = Math.floor(y), k = tx * 100 + ty;
-      if (isBlocked(tx, ty) || seen.has(k)) continue;
-      seen.add(k); out.push({ x, y, face: faceToward(x, y, s.seat.x, s.seat.y) });
+    const s = SLOTS[slot], out = [], sd = s.seat.x + s.seat.y, sdf = s.seat.x - s.seat.y;
+    for (let ty = 0; ty < GY; ty++) for (let tx = 0; tx < GX; tx++) {
+      if (isBlocked(tx, ty) || (tx === 0 && ty === 4)) continue;
+      const x = tx + 0.5, y = ty + 0.5, d = Math.hypot(x - s.seat.x, y - s.seat.y);
+      if (d > 4.3 || d < 1.2) continue;
+      const dd = x + y - sd, dsx = x - y - sdf;
+      let score = Math.abs(d - 2.4) + (dd > 0 && dd <= 3.6 && Math.abs(dsx) < 1.2 ? 3 : 0) + (x < 0.9 && y > 3.7 && y < 5.5 ? 2 : 0);
+      out.push({ x, y, face: faceToward(x, y, s.seat.x, s.seat.y), score });
     }
-    return out;
+    return out.sort((p, q) => p.score - q.score || p.y - q.y);
   }
-
-  /** small colourful person: white shirt + kind-coloured vest, lanyard with ID badge, ~6px shorter than the adults */
-  function drawJunior(c, h, t, face) {
-    const look = h.look, front = face < 2, kc = kindCol(h.kind), lc2 = LANYARD[(kindIdx(h.kind) + 2) % LANYARD.length];
-    const ok = h.state === 'ok', bad = h.state === 'failed';
-    const f = Math.floor(t * 8 + h.phase * 5);
-    const bob = ok ? -Math.floor(Math.abs(Math.sin(t * 7)) * 2) : (h.state === 'working' && f % 3 === 0 ? 1 : 0);
-    const mood = bad ? 'worried' : ok ? 'happy' : 'normal';
-    const blink = ((t * 1000 + h.phase * 3600) % 3600) < 140;
-    R(c, -3, -7, 3, 5, look.pants); R(c, 1, -7, 3, 5, look.pants); R(c, -4, -2, 4, 2, shoes); R(c, 0, -2, 4, 2, shoes);
-    const top = -15 + bob, th = 8 - bob;
-    torso(c, { shirt: '#eef1f8', skin: look.skin }, top, th, front, look.pants);
-    R(c, -4, top + 4, 8, th - 5, kc); R(c, -4, top + 4, 8, 1, shade(kc, 30)); R(c, 2, top + 4, 2, th - 5, shade(kc, -25));
-    if (front) { R(c, -2, top, 1, 3, lc2); R(c, 2, top, 1, 3, lc2); R(c, -1, top + 3, 3, 1, lc2); R(c, -1, top + 4, 3, 3, '#fff'); R(c, -1, top + 4, 3, 1, lc2); R(c, 0, top + 5, 1, 1, '#555'); }
-    else R(c, -3, top, 7, 1, lc2);
-    head(c, look, -25 + bob, front, { blink, mood });
-    const sh = top + 2; let N = [-5, -7], Fh = [5, -7];
-    if (ok) { N = [-9, -31 - bob]; Fh = [9, -31 - bob]; }
-    else if (bad) { const j = Math.floor(t * 8) % 2; N = [-6, -9 - j]; Fh = [6, -9 + j]; }
-    else if (h.state === 'working' && front) { // holding a little tablet with a live screen
-      R(c, -5, top + 6, 10, 7, '#161827'); R(c, -4, top + 7, 8, 5, '#0e2a3a');
-      for (let i = 0; i < 3; i++) R(c, -3, top + 8 + i * 2 - (i === 2 ? 1 : 0), 2 + ((f + i * 2) % 4), 1, i === 1 ? '#5ff2a5' : '#6cb6ff');
-      N = [-5, top + 11]; Fh = [5, top + 11];
-    } else if (h.state === 'working') { N = [-4, -10 + (f % 2)]; Fh = [4, -10 + ((f + 1) % 2)]; }
-    limb(c, 4, sh, Fh[0], Fh[1], { shirt: '#c9cfe0', skin: look.skin }, 1, true);
-    limb(c, -4, sh, N[0], N[1], { shirt: '#c9cfe0', skin: look.skin }, -1, false);
-  }
-
-  function renderJunior(c, h, t) {
-    const face = h.face || 0, ax = sx(h.x, h.y), ay = sy(h.x, h.y, 0);
-    for (let dy = -2; dy <= 2; dy++) { const w = Math.round(7 * Math.sqrt(1 - (dy * dy) / 6.25)); R(c, ax - w, ay + dy, w * 2, 1, 'rgba(40,30,15,.28)'); }
-    sc.setTransform(1, 0, 0, 1, 0, 0); sc.clearRect(0, 0, 80, 80); sc.setTransform(1, 0, 0, 1, ORX, ORY);
-    drawJunior(sc, h, t, face);
-    sc.setTransform(1, 0, 0, 1, 0, 0);
-    blit(c, ax, ay, FLIP[face]);
-  }
-  const HOLD = { ok: 1.4, failed: 2.6, fade: 0.7 };   // seconds a finished helper stays (cheering / '!') before fading out
-  const helperAlpha = (h) => {
-    let a = 1;
-    if (h.age < 0.5) a = Math.min(a, 0.25 * (1 + Math.floor(h.age / 0.125)));
-    const hold = h.state === 'failed' ? HOLD.failed : HOLD.ok;
-    if (h.endAge >= hold) a = Math.min(a, Math.max(0, Math.ceil((1 - (h.endAge - hold) / HOLD.fade) * 4) / 4));
-    return a;
-  };
-  const helperAnchor = (h) => { const ax = sx(h.x, h.y), ay = sy(h.x, h.y, 0); return { ax, ay, head: ay - 26 }; };
 
   // pixel icons for the handoffs
   function paperIcon(c, x, y, f) {
@@ -580,12 +609,6 @@
       const ax = sx(x, y), ay = sy(x, y, seated ? SEAT : 0), top = seated ? 26 : 34;
       objs.push({ x0: x - 0.22, y0: y - 0.22, x1: x + 0.22, y1: y + 0.22, h: top, pad: 10, ord: 1, tag: 'person:' + e.id, draw: (c) => renderPerson(c, e, t, seated),
         hit: (lx, ly) => lx >= ax - 8 && lx <= ax + 8 && ly >= ay - top + (seated ? 1 : 0) && ly <= ay + 3, res: { id: e.id }, person: true });
-    }
-    for (const e of entries) for (const h of e.helpers || []) {
-      const ax = sx(h.x, h.y), ay = sy(h.x, h.y, 0), al = helperAlpha(h);
-      if (al <= 0) continue;
-      objs.push({ x0: h.x - 0.2, y0: h.y - 0.2, x1: h.x + 0.2, y1: h.y + 0.2, h: 28, pad: 9, ord: 1, tag: 'helper:' + h.subId, draw: (c) => { c.globalAlpha = al; renderJunior(c, h, t); c.globalAlpha = 1; },
-        hit: (lx, ly) => lx >= ax - 7 && lx <= ax + 7 && ly >= ay - 27 && ly <= ay + 3, res: { id: e.id }, helper: true });
     }
     return objs;
   }
@@ -656,18 +679,29 @@
       else if (e.id === scene.hoverId) { podRing(lc, s, 'rgba(255,255,255,.8)', 0, 1); if (e.away) { const p = personAnchor(e); ellipseRing(lc, p.ax, p.ay, 13, 6, 'rgba(255,255,255,.8)', 0, 1); } }
     }
     if (scene.hoverSlot != null && !bySlot[scene.hoverSlot]) podRing(lc, SLOTS[scene.hoverSlot], 'rgba(95,242,165,.9)', 0, 1);
-    // dotted isometric links parent -> helpers (L-shaped along the floor axes) and a glowing tile under each helper
+    // dotted isometric links lead -> visiting helper (L-shaped along the floor axes) with a glowing tile, huddle ring, peer links
+    const byId = {}; entries.forEach((e) => { byId[e.id] = e; });
+    const ph8 = Math.floor(t * 8);
     for (const e of entries) {
-      if (!e.helpers || !e.helpers.length) continue;
-      const s = SLOTS[e.slot], ph = Math.floor(t * 8);
-      for (const h of e.helpers) {
-        if (h.age < 0.25 || h.endAge > 0.9) continue;
-        const kc = kindCol(h.kind), fade = h.endAge > 0.35 ? 0.45 : 1, tx = Math.floor(h.x), ty = Math.floor(h.y);
-        lc.globalAlpha = (0.16 + 0.08 * Math.sin(t * 5 + h.phase * 6)) * fade;
-        poly(lc, [A(tx + 0.1, ty + 0.1, 0), A(tx + 0.9, ty + 0.1, 0), A(tx + 0.9, ty + 0.9, 0), A(tx + 0.1, ty + 0.9, 0)], kc);
-        lc.globalAlpha = fade;
-        const P0 = A(s.seat.x, s.seat.y, 0), P1 = A(h.x, s.seat.y, 0), P2 = A(h.x, h.y, 0);
-        dotLine(lc, P0[0], P0[1], P1[0], P1[1], kc, ph); dotLine(lc, P1[0], P1[1], P2[0], P2[1], kc, ph + 2);
+      if (e.huddle != null && !e.away) {
+        const s = SLOTS[e.slot], P = A(s.seat.x - 0.2, s.seat.y - 0.4, 0);
+        ellipseRing(lc, P[0], P[1] + 2, 40, 20, '#f5c542', t, 1); ellipseRing(lc, P[0], P[1] + 2, 38, 19, 'rgba(245,197,66,.5)', t + 1, 1);
+      }
+      const h = e.help; if (!h || e.mode !== 'help') continue;
+      const pe = byId[h.parentId]; if (!pe) continue;
+      const s = SLOTS[pe.slot], rc = roleCol(h.role), tx = Math.floor(e.x), ty = Math.floor(e.y);
+      const fade = h.pose === 'work' ? 1 : 0.5;
+      lc.globalAlpha = (0.16 + 0.08 * Math.sin(t * 5 + e.phase * 6)) * fade;
+      poly(lc, [A(tx + 0.1, ty + 0.1, 0), A(tx + 0.9, ty + 0.1, 0), A(tx + 0.9, ty + 0.9, 0), A(tx + 0.1, ty + 0.9, 0)], rc);
+      lc.globalAlpha = fade;
+      const P0 = A(s.seat.x, s.seat.y, 0), P1 = A(e.x, s.seat.y, 0), P2 = A(e.x, e.y, 0);
+      dotLine(lc, P0[0], P0[1], P1[0], P1[1], rc, ph8); dotLine(lc, P1[0], P1[1], P2[0], P2[1], rc, ph8 + 2);
+      lc.globalAlpha = 1;
+      if (h.peerWith && e.id < h.peerWith && byId[h.peerWith]) { // inferred peer link
+        const o = byId[h.peerWith];
+        lc.globalAlpha = 0.9;
+        const Q0 = A(e.x, e.y, 0), Q1 = A(o.x, e.y, 0), Q2 = A(o.x, o.y, 0);
+        dotLine(lc, Q0[0], Q0[1], Q1[0], Q1[1], '#ffffff', ph8); dotLine(lc, Q1[0], Q1[1], Q2[0], Q2[1], '#ffffff', ph8 + 2);
         lc.globalAlpha = 1;
       }
     }
@@ -678,55 +712,42 @@
     }
     lc.globalAlpha = 1;
     for (const o of sortObjs(buildObjects(entries, t))) o.draw(lc);
-    // state icons + chat bubbles sit above everything
+    // state icons, role badges, talk bubbles sit above everything
+    const chest = (e) => { const p = personAnchor(e); return [p.ax, p.ay - (e.away ? 18 : 13)]; };
     for (const e of entries) {
-      const p = personAnchor(e);
+      const p = personAnchor(e), h = e.help;
+      if (h) {
+        roleBadge(lc, p.ax - 17, p.ay - (e.away ? 31 : 28), h.role);
+        const st = h.say ? null : h.pose === 'cheer' ? 'done' : h.pose === 'worry' ? 'error' : null;
+        if (st) stateIcon(lc, p.ax, p.head + 2, st, t);
+        if (e.away && e.mode === 'help' && e.talk != null) drawTalk(lc, p.ax + e.talkDir * 6, p.head - 2, e.talk, e.talkDir);
+        continue;
+      }
       if (!e.away) stateIcon(lc, p.ax, p.head, e.state, t);
       else { stateIcon(lc, p.ax, p.head + 2, e.state, t); if (e.mode === 'chat' && e.talk != null) drawTalk(lc, p.ax + e.talkDir * 6, p.head - 2, e.talk, e.talkDir); }
     }
-
-    // helpers: status icons, pop-in / fade sparks, flying papers and envelopes, "result arrived" bubbles
-    const byId = {}; entries.forEach((e) => { byId[e.id] = e; });
-    const chest = (e) => { const p = personAnchor(e); return [p.ax, p.ay - (e.away ? 18 : 13)]; };
-    for (const e of entries) for (const h of e.helpers || []) {
-      const al = helperAlpha(h); if (al <= 0) continue;
-      const a = helperAnchor(h), kc = kindCol(h.kind);
-      lc.globalAlpha = al;
-      if (h.state === 'ok' && h.endAge < HOLD.ok) stateIcon(lc, a.ax, a.head, 'done', t);
-      else if (h.state === 'failed') stateIcon(lc, a.ax, a.head, 'error', t);
-      lc.globalAlpha = 1;
-      const sp = h.age < 0.7 ? h.age / 0.7 : (h.endAge >= (h.state === 'failed' ? HOLD.failed : HOLD.ok) ? (h.endAge - (h.state === 'failed' ? HOLD.failed : HOLD.ok)) / HOLD.fade : -1);
-      if (sp >= 0 && sp <= 1) {
-        const up = h.age >= 0.7;
-        for (let i = 0; i < 7; i++) {
-          const ang = (i / 7) * Math.PI * 2 + h.phase * 3, r = (up ? 4 + sp * 6 : sp * 15), px = a.ax + Math.cos(ang) * r, py = a.ay - 6 + Math.sin(ang) * r * 0.5 - (up ? sp * 20 : sp * 8);
-          lc.globalAlpha = 1 - sp; R(lc, Math.round(px), Math.round(py), 1, 1, i % 2 ? '#fff' : kc); if (i % 3 === 0) { R(lc, Math.round(px) - 1, Math.round(py), 3, 1, kc); R(lc, Math.round(px), Math.round(py) - 1, 1, 3, kc); }
-        }
-        lc.globalAlpha = 1;
-      }
-    }
+    for (const e of entries) if (e.planAge != null && !e.away) { const p = personAnchor(e); clipboardIcon(lc, p.ax + 17, p.head + 1 + Math.round(Math.sin(t * 3)), t); }
     for (const f of scene.flights || []) {
       if (f.p < 0 || f.p > 1) continue;
-      const pe = byId[f.pid]; if (!pe) continue;
       let from, to, kc = '#6cb6ff', draw;
       if (f.kind === 'letter') {
-        const te = byId[f.toId]; if (!te) continue;
-        from = chest(pe); to = chest(te); draw = (x, y) => envelopeIcon(lc, x, y, '#6cb6ff');
+        const fe = byId[f.pid], te = byId[f.toId]; if (!fe || !te) continue;
+        from = chest(fe); to = chest(te); draw = (x, y) => envelopeIcon(lc, x, y, '#6cb6ff');
       } else {
-        const h = (pe.helpers || []).find((x) => x.subId === f.subId); if (!h) continue;
-        const hp = helperAnchor(h), hc = [hp.ax, hp.ay - 13]; kc = kindCol(h.kind);
-        if (f.kind === 'out') { from = chest(pe); to = hc; draw = (x, y) => paperIcon(lc, x, y, Math.floor(t * 10)); }
-        else { from = hc; to = chest(pe); draw = (x, y) => envelopeIcon(lc, x, y, f.ok === false ? '#e5484d' : '#30a46c'); }
+        const pe = byId[f.pid], he = byId[f.hid]; if (!pe || !he) continue;
+        kc = roleCol(he.help ? he.help.role : f.role);
+        if (f.kind === 'out') { from = chest(pe); to = chest(he); draw = (x, y) => paperIcon(lc, x, y, Math.floor(t * 10)); }
+        else { from = chest(he); to = chest(pe); draw = (x, y) => envelopeIcon(lc, x, y, f.ok === false ? '#e5484d' : '#30a46c'); }
       }
-      const ez = f.p < 0.5 ? 2 * f.p * f.p : 1 - Math.pow(-2 * f.p + 2, 2) / 2, arc = f.kind === 'letter' ? 24 : 16;
+      const arc = f.kind === 'letter' ? 24 : 16;
       const pos = (q) => { const z = q < 0.5 ? 2 * q * q : 1 - Math.pow(-2 * q + 2, 2) / 2; return [from[0] + (to[0] - from[0]) * z, from[1] + (to[1] - from[1]) * z - Math.sin(Math.PI * Math.min(1, Math.max(0, q))) * arc]; };
       for (let k = 3; k >= 1; k--) { const q = f.p - k * 0.05; if (q < 0) continue; const tp = pos(q); lc.globalAlpha = 0.7 / k; R(lc, Math.round(tp[0]), Math.round(tp[1]), 2, 2, kc); }
       lc.globalAlpha = 1;
       const pp = pos(f.p); draw(pp[0], pp[1]);
     }
-    for (const e of entries) if (e.rcv && e.rcv.age >= 0 && e.rcv.age < 2.4) {
-      const p = personAnchor(e), bob = Math.floor(Math.sin(e.rcv.age * 8) * 1.2), pop = e.rcv.age < 0.15 ? 0.5 : 1;
-      lc.globalAlpha = e.rcv.age > 2.0 ? Math.max(0, 1 - (e.rcv.age - 2.0) / 0.4) : pop;
+    for (const e of entries) if (e.rcv && e.rcv.age >= 0 && e.rcv.age < 2.4 * (scene.slow || 1)) {
+      const p = personAnchor(e), bob = Math.floor(Math.sin(e.rcv.age * 8) * 1.2), pop = e.rcv.age < 0.15 ? 0.5 : 1, life = 2.4 * (scene.slow || 1);
+      lc.globalAlpha = e.rcv.age > life - 0.4 ? Math.max(0, 1 - (e.rcv.age - (life - 0.4)) / 0.4) : pop;
       msgBubble(lc, p.ax + 15, p.head - 5 + bob, e.rcv.ok === false ? 'err' : 'env');
       lc.globalAlpha = 1;
     }
@@ -748,17 +769,29 @@
       ctx.fillStyle = dotCol; ctx.fillRect(Math.round(left + 5 * U), Math.round(labY - 3 * U), Math.round(5 * U), Math.round(5 * U));
       if (tb) pillText(ctx, tb.text, left + nw + gap + bw / 2, labY, U * 0.8, tb.fg, tb.bg, true);
       // tool chip floats just above the head (over the monitor it would cover the face)
-      if (!e.away && e.waiting > 0) pillText(ctx, 'waiting on ' + e.waiting + ' helper' + (e.waiting > 1 ? 's' : '') + '.'.repeat(1 + Math.floor(t * 2) % 3), p.ax * S, (p.head - 5) * S, U * 0.9, '#2a1f00', '#f5c542', true);
+      if (!e.away && e.huddle != null) pillText(ctx, 'team huddle', p.ax * S, (p.head - 5) * S, U * 0.9, '#2a1f00', '#f5c542', true);
+      else if (!e.away && e.waiting > 0) pillText(ctx, 'waiting on ' + e.waiting + ' helper' + (e.waiting > 1 ? 's' : '') + '.'.repeat(1 + Math.floor(t * 2) % 3), p.ax * S, (p.head - 5) * S, U * 0.9, '#2a1f00', '#f5c542', true);
       else if (!e.away && e.state === 'working') pillText(ctx, e.tool || 'typing…', p.ax * S, (p.head - 5) * S, U * 0.9, '#0e1f1a', '#5ff2a5', true);
-      for (const h of e.helpers || []) {
-        const al = helperAlpha(h); if (al <= 0) continue;
-        const a = helperAnchor(h); ctx.globalAlpha = al;
-        pillText(ctx, h.label, a.ax * S, (a.ay + 9) * S, U * 0.72, '#14151f', kindCol(h.kind), true);
-        if (h.state === 'working' && h.age > 0.5) pillText(ctx, h.tool || 'starting…', a.ax * S, (a.head - 5) * S, U * 0.72, '#14151f', '#dbe4ff', true);
-        ctx.globalAlpha = 1;
+      if (e.help && e.away) {
+        const hp = e.help;
+        pillText(ctx, e.name + ' · ' + hp.role, p.ax * S, (p.ay + 10) * S, U * 0.72, '#14151f', roleCol(hp.role), true);
+        if (e.mode === 'help' && hp.pose === 'work') pillText(ctx, hp.tool || 'starting…', p.ax * S, (p.head - 5) * S, U * 0.72, '#14151f', '#dbe4ff', true);
       }
       if (e.queued) pillText(ctx, '+' + e.queued + ' queued', labX * S, (lp[1] + 11) * S, U * 0.85, '#14151f', '#f5c542', true);
-      if (e.bubble) drawBubble(ctx, e.bubble, p.ax * S, (p.head - 18) * S, S, U, canvas.width);
+      // (speech bubbles are drawn after the loop so overlapping ones can be stacked)
+    }
+    const bubs = [];
+    for (const e of entries) { const bub = e.help && e.help.say ? e.help.say : e.bubble; if (bub) bubs.push({ e, bub, p: personAnchor(e), w: Math.min(Math.max(120 * U, 46 * S) + 12 * U, bub.length * 6.6 * U + 14 * U) }); }
+    bubs.sort((a, b) => a.p.ax - b.p.ax);
+    const placed = [];
+    for (const b of bubs) {
+      const cx = b.p.ax * S; let bottom = (b.p.head - 18) * S;
+      for (let k = 0; k < 12; k++) {
+        const r = drawBubble(ctx, b.bub, cx, bottom, S, U, canvas.width, true), m = 3 * U;
+        if (!placed.some((q) => r.x < q.x + q.w + m && r.x + r.w + m > q.x && r.y < q.y + q.h + m && r.y + r.h + m > q.y)) { placed.push(r); break; }
+        bottom -= 8 * U;
+      }
+      drawBubble(ctx, b.bub, cx, bottom, S, U, canvas.width);
     }
     for (const s of SLOTS) if (!bySlot[s.i] && scene.hoverSlot === s.i) { const lp = labelPt(s); pillText(ctx, '＋ hire', lp[0] * S, lp[1] * S, U, '#0e1f1a', '#5ff2a5', true); }
   }
@@ -775,7 +808,7 @@
     drawAvatar: F.drawAvatar, GX, GY, isBlocked, project: (x, y, z) => [sx(x, y), sy(x, y, z || 0)],
     deskPoint: (slot) => { const s = SLOTS[slot]; return [sx(s.dx + 0.5, s.dy + 1), sy(s.dx + 0.5, s.dy + 1, DESKZ)]; },
     labelPoint: labelPt,
-    helperSpots, HOLD, kindCol,
+    helperSpots, kindCol, roleCol, roleBadge, ROLE_COL, walkBetween,
     drawOrder: (entries) => sortObjs(buildObjects(entries, 0)).map((o) => o.tag || 'other'),   // for tests
   };
 })();

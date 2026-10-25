@@ -36,8 +36,38 @@ async function team() {
   out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid });
 }
 
+// A real-ish `/code-review` fan-out: 4 Task calls with typed subagents, overlapping file reads, different durations, one failure.
+async function codeReview() {
+  const tasks = [
+    ['toolu_sec', 'Security review of auth changes', 'security-reviewer'], ['toolu_perf', 'Performance analysis of the API layer', 'performance-analyst'],
+    ['toolu_test', 'Check test coverage of changed files', 'test-runner'], ['toolu_style', 'Style and lint check', 'style-linter'],
+  ];
+  out({ type: 'assistant', session_id: sid, parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: 'Launching four reviewers in parallel.' },
+    ...tasks.map(([id, description, subagent_type]) => ({ type: 'tool_use', id, name: 'Task', input: { description, subagent_type, prompt: description + '. Review the diff of this branch.' } }))] } });
+  const act = (id, name, input) => out({ type: 'assistant', session_id: sid, parent_tool_use_id: id, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'sub_' + id + name + Math.random(), name, input }] } });
+  const end = (id, content, is_error) => out({ type: 'user', session_id: sid, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: !!is_error, content: [{ type: 'text', text: content }] }] } });
+  await wait(300);
+  act('toolu_sec', 'Grep', { pattern: 'token|secret' }); act('toolu_perf', 'Read', { file_path: 'src/api.js' }); act('toolu_test', 'Bash', { command: 'npm test' }); act('toolu_style', 'Bash', { command: 'npx eslint src' });
+  await wait(400);
+  act('toolu_sec', 'Read', { file_path: 'src/auth.js' }); act('toolu_perf', 'Read', { file_path: 'src/api.js' }); act('toolu_test', 'Read', { file_path: 'src/auth.js' });   // overlaps: sec/test on auth.js, perf/sec on api.js
+  await wait(400);
+  act('toolu_sec', 'Read', { file_path: 'src/api.js' });
+  end('toolu_style', 'eslint config missing, could not lint', true);
+  await wait(400);
+  end('toolu_perf', 'Found 2 issues: N+1 query in src/api.js.');
+  await wait(300);
+  end('toolu_test', 'Found 1 issue: no test for token expiry.');
+  await wait(300);
+  end('toolu_sec', 'Found 3 issues: token never expires in src/auth.js. The tests reviewer should cover that.');
+  await wait(300);
+  const text = '(fake claude code-review) Security 3 issues, performance 2, tests 1, style failed.';
+  out({ type: 'assistant', session_id: sid, parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text }] } });
+  out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid });
+}
+
 (async () => {
   out({ type: 'system', subtype: 'init', session_id: sid, cwd: process.cwd(), tools: ['Bash', 'Read'] });
+  if (/code-review/i.test(prompt)) { await codeReview(); return; }
   if (/parallel|team/i.test(prompt)) { await team(); return; }
   await wait(600);
   out({ type: 'assistant', session_id: sid, message: { role: 'assistant', content: [{ type: 'text', text: 'Let me check.' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls -la' } }] } });

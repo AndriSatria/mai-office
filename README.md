@@ -35,41 +35,60 @@ drawers, chair), plants, and a coffee corner (counter, machine, kettle, mugs, ru
   green + “＋ hire” on an empty desk), plus an ellipse under a selected agent who is away from the desk.
 * **Overlays** (name pill, type badge, tool chip, queued pill, speech bubbles) are drawn at full resolution on top of the
   scaled canvas, anchored to projected points.
-* **Flat view:** `http://localhost:3000/?view=flat` still gives the original top-down renderer (`office-flat.js`).
+* **Flat view:** `http://localhost:3000/?view=flat` still gives the original top-down renderer (`office-flat.js`); it shows helpers working from their own desks (no walking).
 
-## Teams, helpers & agent-to-agent messages
+## Team collaboration: colleagues help each other
 
-When an agent runs work in parallel (Claude `Task` subagents, Cursor helper tasks, or the mock's simulated team) every helper shows up in the
-office as a **junior** and the parent is visibly "waiting on N helpers".
+One project, several agents: when an agent runs work in parallel (a Claude `Task`/`Agent` fan-out such as `/code-review`, Cursor helper tasks,
+or the mock's simulated team) the helpers are **the people who already work in the office**. Nobody pops in or fades out.
 
-![team](screenshots/15-team-3-parallel-helpers.png)
-![handoff](screenshots/16-team-result-handoff.png)
+![4 helpers](screenshots/15-team-code-review-4-helpers.png)
+![peer talk](screenshots/16-team-peer-conversation.png)
+![huddle](screenshots/17-team-huddle.png)
+![handoff](screenshots/18-team-result-handoff.png)
 
-* **Visuals:** a junior pops in at a free spot next to the parent's desk (shorter, white shirt, kind-coloured vest, lanyard + a small
-  badge with the helper label, tablet while working, tool chip). The parent turns toward them and a **paper flies parent → helper**;
-  dotted isometric lines connect parent and helpers. When a helper ends, an **envelope with a speech-bubble icon flies back** to the
-  parent (failed helpers show `!`), the junior cheers (or looks worried), holds for a moment and fades out. Spots that are blocked or
-  taken are skipped; if there is no free spot the helper is queued and placed when one frees up.
-* **Chat panel:** each helper is one collapsed line (`↳ helper 'label' started / finished / failed · kind · N steps`); expand it for the
-  helper's tool log and result.
-* **Events** (normalized adapter events): `subagent_start {subId,label,kind}`, `subagent_activity {subId,tool,summary}`,
-  `subagent_end {subId,ok}`. Concurrent helpers are tracked by `subId`. Helpers never drive the parent's own state or tool chip; a run
-  result/error/interrupt closes any helper still open; helpers that were running when the server restarted are marked `lost`.
-* **Claude mapping:** a `Task` (or `Agent`) `tool_use` starts a helper (its `id` is the `subId`); events carrying `parent_tool_use_id`
-  are helper activity; the matching `tool_result` ends it (`is_error` = failed). **Cursor** is best effort: a tool call named like
-  `task` / `subagent` / `agent` is treated as a helper. **Mock:** type `/team <task>` (3 helpers) or a message containing "in parallel" /
-  "subagents" (2-3 helpers; "fail" in the text makes the last one fail), or click **👥 Team task** next to the composer.
-* **Send to another agent:** pick a colleague in the select next to **Send** and the message is delivered to them as `[from <name>] …`
-  with a flying letter; the sender's chat keeps a "✉ Sent to X" line.
-* The flat view (`?view=flat`) ignores helpers. WebSocket additions: client→server `relay {from,to,text}`; server→client
-  `subagent {op,id,sub}`, `sub_update`, `relay {from,to}`.
+* **Who helps:** each subagent is assigned to an existing colleague, **idle ones first** (fewest times helped first). If nobody is idle a new regular,
+  persistent agent is **auto-hired** (max 8 desks, mock type) at a free desk and **walks in through the entrance door** (no pop-in). If the office is
+  full the subagent waits (pending) and is assigned when somebody frees up. In the flat view helpers just work from their own desks.
+* **Helping status:** the colleague gets a temporary "helping <parent> · role" status, walks to the lead's desk area (free tiles on a ring ~2.4 tiles
+  around the lead, never on furniture and never hiding the lead; depth-sorted), and shows a **role badge + coloured lanyard** (no new look) and a tool
+  chip while working. A paper flies lead → helper on arrival; dotted isometric lines connect lead and helpers. When the helper ends, an **envelope with
+  a short summary bubble** ("found 3 issues", failures show `!`) flies back to the lead; the helper cheers (or looks worried) and **walks back to its own
+  desk** and returns to idle, once the lead's other helpers have reported and the huddle is over.
+* **Roles** (`lib/roles.js`) come from the Task input (`subagent_type`, then description, then prompt) by keyword: `security` (red), `performance`
+  (orange), `tests` (green), `style` (purple), `docs` (blue), `architecture` (pink), `explore` (cyan), otherwise `general` (grey); each has a small icon in its badge.
+* **Messages to a helping colleague** are queued (`+N queued` pill) and run after the helper job ended (+ a short hold). Their transcript only gets one
+  system line, `helped <parent>: <label>`. The chat header shows "helping <parent> · role".
+* **Inferred interactions.** Claude subagents cannot message each other, so these are *inferred from the event stream* and labelled **inferred** (tooltip on
+  the person, the "Team activity" feed and this README). They never change what the agents actually do:
+  1. two helpers that touch the **same file/pattern** within a time window turn toward each other and trade `?` / `!` / `…` bubbles (throttled: one pair at
+     a time, a cooldown per pair, max 6 per run);
+  2. when a helper ends it **hands an envelope to the lead** with a short summary, plus a **letter to another helper** if its result text mentions that helper's role;
+  3. the lead **announces the plan** (clipboard icon, a paper per helper) at the start and holds a **team huddle** (ring on the floor, "team huddle" chip,
+     consolidated bubble) once the last helper has reported.
+* **Chat panel:** every helper is one collapsed line (`↳ helper 'label' started · role · helperName · N steps`) and a collapsible **👥 Team activity**
+  feed per lead lists the plan, assignments, peer chats, handoffs, mentions and the huddle; inferred entries carry an `inferred` tag with the reason.
+* **Mock mode:** `/code-review` (4 role helpers with overlapping files and different durations, one fails, then a consolidated summary), `/team <task>`
+  (3 helpers), a message containing "in parallel"/"subagents" ("fail" makes the last one fail), or the **👥 Team task** button. `scripts/fake-claude.js`
+  emulates a `/code-review` Task fan-out for the real Claude adapter path.
+* **Events** (normalized adapter events): `subagent_start {subId,label,kind,hint}`, `subagent_activity`, `subagent_end {subId,ok}`. A `Task`/`Agent`
+  `tool_use` starts a subagent, events with `parent_tool_use_id` are its activity, the matching `tool_result` ends it (`is_error` = failed). Cursor is best
+  effort (tool calls named `task`/`subagent`/`agent`). Harness → client: `subagent {op:'start'|'assign'|'activity'|'end',id,sub}` (end carries `ok`, `short`,
+  `helperId`), `team {id,entry}` / `team {id,reset}` (entry kinds `plan assign note peer handoff mention huddle`, each with `inferred`, `text`, `why`), and
+  `agent` updates carrying `helping {parentId,parentName,subId,label,role,kind}`, `autoHired` and `subs[].role/helperId`. Client→server: `relay {from,to,text}`.
+* **Send to another agent:** pick a colleague in the select next to **Send** and the message is delivered as `[from <name>] …` with a flying letter.
+* **Pacing:** `HARNESS_SLOW=N` stretches the server timers (release/hold/inference windows and the mock's timings), `?slow=N` stretches walking speed and bubble
+  lifetimes in the page. The demo videos use 2 (`DEMO_SLOW`).
 
-**Demo video:** `demo/mai-office-demo.mp4` (~37 s, 1920×1080) shows empty office → hiring 4 agents → idle stretch/read/coffee chat →
-a message to Ada (typing, thinking, working with tool chip) → 3 parallel helpers with handoffs and dotted lines → results return, check mark
-and reply bubble. Re-record with `npm run demo:video` (mock mode, Playwright `recordVideo` + ffmpeg to H.264/yuv420p; `DEMO_SLOW=1.5` slows the pauses).
+**Demo videos** (1920×1080, H.264, slow pace: every bubble/chip/handoff stays up ≥2.5 s and each beat has a bottom caption):
+`demo/mai-office-demo.mp4` (empty office → hire 4 agents → idle stretch/coffee chat → a message to Ada → `/team` with 3 colleagues walking over, handoffs and
+dotted lines → results return, check mark + reply bubble) and `demo/mai-office-demo-codereview.mp4` (`/code-review`: plan, colleagues walk over, an auto-hired
+colleague walks in through the door, role badges + tool chips, inferred peer talk, a failing helper, handoffs, huddle, everyone walks back, consolidated reply).
+Re-record with `npm run demo:video`, `npm run demo:video:codereview` or `npm run demo:videos` (mock mode, Playwright `recordVideo` + ffmpeg).
 
-**Not verified against real CLIs:** the Claude `Task` / `parent_tool_use_id` handling follows the documented stream-json shape and is only
-tested with `scripts/fake-claude.js`; the Cursor helper shape is a guess; `/team`, relay and the visuals were exercised with the mock and fake CLIs only.
+**Not verified against real CLIs:** the Claude `Task` / `parent_tool_use_id` handling follows the documented stream-json shape and is only tested with
+`scripts/fake-claude.js`; the Cursor helper shape is a guess; role derivation, the inferred interactions, assignment/auto-hire and relay were exercised with the
+mock and fake CLIs only.
 
 ## Run
 
@@ -193,7 +212,8 @@ cross-origin WebSocket connections, but there is **no authentication** — don't
 
 ```
 server.js                 express static + WebSocket hub
-lib/harness.js            agent registry, state machine, persistence, message queue
+lib/harness.js            agent registry, state machine, persistence, message queue, helper assignment / auto-hire, team feed
+lib/roles.js              role derivation from Task input + file-overlap / mention inference helpers
 lib/adapters/claude.js    Claude Code CLI adapter (stream-json)
 lib/adapters/cursor.js    Cursor CLI agent adapter (stream-json)
 lib/adapters/mock.js      simulated agent
@@ -202,16 +222,16 @@ public/index.html, style.css
 public/js/office-iso.js   isometric renderer (default): projection, furniture, 4-facing characters, depth sort, hit test, pathfinding
 public/js/office-flat.js  the original top-down renderer (`?view=flat`); also supplies shared bubble/icon helpers
 public/js/app.js          WebSocket client, chat panel, wandering logic
-scripts/screenshots.js    Playwright demo: hires, chats, screenshots → screenshots/
+scripts/screenshots.js    Playwright demo: hires, chats, screenshots → screenshots/ (screenshots-hd.js: 3840×2160; team-shots.js: shared /code-review beats)
 scripts/fake-claude.js    fake `claude` binary for adapter testing
 scripts/fake-cursor-agent.js  fake `cursor-agent` binary
 scripts/test-iso.js       Playwright geometry tests: iso hit testing, paths, depth order, mouse (`npm run test:iso`)
-scripts/demo-video.js     records demo/mai-office-demo.mp4 (`npm run demo:video`)
+scripts/demo-video.js     records demo/mai-office-demo.mp4 and demo/mai-office-demo-codereview.mp4 (`npm run demo:videos`)
 scripts/test-adapters.js  end-to-end test of all agent types + type persistence (`npm run test:adapters`)
 ```
 
 WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`, `relay {from,to,text}`;
-server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `error`.
+server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `subagent`, `team`, `relay`, `error`.
 
 ## Regenerate screenshots
 
@@ -222,10 +242,10 @@ npm run screenshots     # uses the fake claude/cursor CLIs so all agent types ap
 
 Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, wandering, coffee break, fire),
 `10-idle-stretch-read-look`, `11`/`11b-idle-chat-at-coffee`, `12-hire-dialog-agent-type`, `13-flat-view-fallback` (`?view=flat`),
-`14-hover-empty-desk`, `15-team-3-parallel-helpers`, `16-team-result-handoff`, `17-agent-to-agent-letter`. (`07-wandering` is the walking agent.)
+`14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`. (`07-wandering` is the walking agent.)
 
 **HD shots:** `npm run screenshots:hd` renders a 1920×1080 viewport at deviceScaleFactor 2 and saves 3840×2160 PNGs to `screenshots/hd/`
-(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`/`06` team with 3 parallel helpers + result handoff). The canvas backing store is in device pixels with an integer
+(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`08` team: /code-review with 4 helpers, peer conversation, huddle, result handoff). The canvas backing store is in device pixels with an integer
 scale (×7 at DPR 2), so nothing is resampled; the script asserts this before capturing. Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
 
 ## Known limitations / ideas

@@ -11,7 +11,9 @@
     "test:adapters": "node scripts/test-adapters.js",
     "test:iso": "node scripts/test-iso.js",
     "screenshots:hd": "node scripts/screenshots-hd.js",
-    "demo:video": "node scripts/demo-video.js"
+    "demo:video": "node scripts/demo-video.js",
+    "demo:video:codereview": "node scripts/demo-video.js codereview",
+    "demo:videos": "node scripts/demo-video.js && node scripts/demo-video.js codereview"
   },
   "engines": {
     "node": ">=18"

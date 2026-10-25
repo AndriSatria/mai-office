@@ -383,7 +383,7 @@
     mock: { text: 'Mock', bg: '#5a5f7a', fg: '#fff' },
   };
 
-  function drawBubble(ctx, text, cx, bottom, S, U, W2) {
+  function drawBubble(ctx, text, cx, bottom, S, U, W2, dry) {
     ctx.font = `${Math.round(11 * U)}px ${FONT}`;
     ctx.textBaseline = 'top'; ctx.textAlign = 'left';
     const maxW = Math.max(120 * U, 46 * S);
@@ -395,6 +395,7 @@
     const h = lines.length * lh + pad * 2;
     let x = Math.round(cx - w / 2); x = Math.max(4, Math.min(W2 - w - 4, x));
     const y = Math.round(bottom - h);
+    if (dry) return { x, y, w, h: h + 8 * U };   // measuring only (used to stack overlapping bubbles)
     ctx.fillStyle = '#2b2f3b'; ctx.fillRect(x - bw2, y - bw2, w + bw2 * 2, h + bw2 * 2);
     ctx.fillStyle = '#fffbe8'; ctx.fillRect(x, y, w, h);
     // blocky tail
