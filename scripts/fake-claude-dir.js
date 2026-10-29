@@ -47,7 +47,29 @@ function makeFakeClaudeDir() {
     const k = order.findIndex((id) => rel.includes(id)), t = new Date(Date.now() - (k < 0 ? 9 : 3 - k) * 3600e3);
     fs.utimesSync(f, t, t);
   }
-  return { base, dir, cwds, ids };
+  // "/" commands: user commands (one in a sub folder, one with broken frontmatter), skills, a plugin, project + Cursor commands
+  const cursorDir = path.join(base, 'cursor');
+  const plug = path.join(dir, 'plugins', 'cache', 'acme-market', 'deploy-kit', '1.2.0');
+  const md = {
+    [path.join(dir, 'commands', 'frontend', 'component.md')]: '---\ndescription: Scaffold a React component with tests\nargument-hint: <Name> [--size sm|lg]\n---\nCreate $ARGUMENTS.\n',
+    [path.join(dir, 'commands', 'review-pr.md')]: '# Review the open pull request for bugs\n\nLook at the diff.\n',
+    [path.join(dir, 'commands', 'changelog.md')]: '---\ndescription Broken frontmatter line without a colon\n---\nSummarize the changelog since the last tag\n',
+    [path.join(dir, 'skills', 'release-notes', 'SKILL.md')]: '---\nname: release-notes\ndescription: "Draft release notes from merged PRs"\n---\n# Release notes\n',
+    [path.join(dir, 'skills', 'hidden-helper', 'SKILL.md')]: '---\ndescription: Background knowledge only\nuser-invocable: false\n---\n',
+    [path.join(plug, '.claude-plugin', 'plugin.json')]: JSON.stringify({ name: 'deploy-kit', version: '1.2.0' }),
+    [path.join(plug, 'commands', 'ship.md')]: '---\ndescription: Deploy the current branch to staging\nargument-hint: [env]\n---\n',
+    [path.join(plug, 'skills', 'rollback', 'SKILL.md')]: '---\ndescription: Roll back the last deploy\n---\n',
+    [path.join(dir, 'plugins', 'installed_plugins.json')]: JSON.stringify({ version: 2, plugins: {
+      'deploy-kit@acme-market': [{ scope: 'user', installPath: plug, version: '1.2.0' }],
+      'other-repo@acme-market': [{ scope: 'project', projectPath: cwds.blog, installPath: path.join(base, 'nowhere') }],
+    } }),
+    [path.join(cwds.shop, '.claude', 'commands', 'db', 'migrate.md')]: '---\ndescription: Write and run a database migration\nargument-hint: <change>\n---\n',
+    [path.join(cwds.shop, '.claude', 'skills', 'seed-data', 'SKILL.md')]: '---\ndescription: Fill the dev database with sample orders\n---\n',
+    [path.join(cwds.shop, '.cursor', 'commands', 'lint.md')]: 'Run the linter and fix what it finds\n',
+    [path.join(cursorDir, 'commands', 'explain.md')]: '# Explain the selected code\n',
+  };
+  for (const [f, text] of Object.entries(md)) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); }
+  return { base, dir, cwds, ids, cursorDir };
 }
 
 module.exports = { makeFakeClaudeDir };

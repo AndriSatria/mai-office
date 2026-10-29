@@ -139,7 +139,7 @@
   // ---------- chat panel ----------
   let msgEls = new Map();
   const tr = $('transcript');
-  function select(id) { selectedId = id; renderChat(true); if (id) $('input').focus(); }
+  function select(id) { selectedId = id; closeSlash(); renderChat(true); if (id) $('input').focus(); }
 
   function renderChat(full) {
     const a = agents.get(selectedId);
@@ -169,9 +169,10 @@
     $('queueInfo').textContent = a.queued ? `${a.queued} message(s) queued${a.helping ? ` until the helper job ends` : ''}` : (a.helping ? `helping ${a.helping.parentName}: new messages wait` : a.hasSession ? 'session active' : '');
     $('teamBtn').hidden = a.type !== 'mock';
     $('mainBadge').hidden = !a.main; $('mainBtn').hidden = !!a.main;
-    const pm = a.permissionMode === 'plan';
-    $('planBtn').classList.toggle('on', pm); $('planBtn').setAttribute('aria-pressed', pm ? 'true' : 'false'); $('planBtn').title = pm ? 'Plan mode is ON for ' + a.name + ': they gather at the round table to plan first. Click to turn off.' : 'Plan mode: ' + a.name + ' plans first and everybody gathers at the round table. (Or type /plan <task> for one run.)';
-    $('planBtn').textContent = pm ? '📋 Plan: on' : '📋 Plan';
+    const ml = $('modeLine'), modes = a.modes || ['default'];
+    ml.textContent = MODE_TEXT[a.permissionMode] + (modes.length > 1 ? ' (shift+tab to cycle)' : '');
+    ml.className = 'modeLine ' + a.permissionMode;
+    ml.setAttribute('aria-label', `Permission mode: ${MODE_TEXT[a.permissionMode]}. Activate to switch to the next mode.`);
     const rt = $('relayTo'), others = [...agents.values()].filter((b) => b.id !== a.id), sig = a.id + '|' + others.map((b) => b.id + b.name).join(',');
     if (rt.dataset.sig !== sig) {
       rt.dataset.sig = sig; rt.innerHTML = '<option value="">this agent</option>';
@@ -224,7 +225,7 @@
     const to = $('relayTo').value;
     if (to) { send({ type: 'relay', from: selectedId, to, text }); $('relayTo').value = ''; $('relayTo').classList.remove('on'); }
     else send({ type: 'send', id: selectedId, text });
-    $('input').value = '';
+    $('input').value = ''; closeSlash();
   });
   $('relayTo').addEventListener('change', () => $('relayTo').classList.toggle('on', !!$('relayTo').value));
   $('teamBtn').addEventListener('click', () => { // mock agents: spawn parallel helpers
@@ -232,10 +233,74 @@
     const task = $('input').value.trim() || 'Refactor the auth module';
     send({ type: 'send', id: selectedId, text: '/team ' + task }); $('input').value = '';
   });
-  $('input').addEventListener('keydown', (e) => {
+  // ---------- permission mode line (Shift+Tab cycles, like the Claude Code CLI) ----------
+  const MODE_TEXT = { default: 'default mode', acceptEdits: '▸▸ accept edits on', plan: '‖ plan mode on', bypassPermissions: '▸▸ bypass permissions on' };
+  function cycleMode() {
+    const a = agents.get(selectedId); if (!a) return;
+    const modes = a.modes || ['default'];
+    if (modes.length > 1) send({ type: 'permission', id: a.id, mode: modes[(modes.indexOf(a.permissionMode) + 1) % modes.length] });
+  }
+  $('modeLine').addEventListener('click', cycleMode);
+
+  // ---------- "/" command popup ----------
+  const slash = { open: false, items: [], idx: 0, cache: new Map(), state: 'idle', error: '' };
+  const pop = $('slashPop'), inp = $('input');
+  const SRC_LABEL = { user: 'user', project: 'project', plugin: 'plugin', session: 'session', app: 'office', mock: 'demo' };
+  function slashQuery() { const m = /^\/(\S*)$/.exec(inp.value); return m ? m[1].toLowerCase() : null; }
+  async function loadCommands(id) {
+    slash.state = 'loading'; renderSlash();
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(id)}/commands`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      slash.cache.set(id, j.commands); slash.state = 'ready';
+    } catch (e) { slash.state = 'error'; slash.error = e.message; }
+    if (id === selectedId) updateSlash();
+  }
+  function closeSlash() { slash.open = false; pop.hidden = true; inp.setAttribute('aria-expanded', 'false'); inp.removeAttribute('aria-activedescendant'); }
+  function updateSlash() {
+    const q = slashQuery();
+    if (q === null || !selectedId) { closeSlash(); return; }
+    if (!slash.open) { slash.open = true; slash.idx = 0; loadCommands(selectedId); return; }
+    const all = slash.cache.get(selectedId) || [];
+    slash.items = all.filter((c) => c.name.toLowerCase().includes(q)).sort((x, y) => (y.name.toLowerCase().startsWith(q) - x.name.toLowerCase().startsWith(q)));
+    slash.idx = Math.min(slash.idx, Math.max(0, slash.items.length - 1));
+    renderSlash();
+  }
+  function renderSlash() {
+    pop.hidden = false; inp.setAttribute('aria-expanded', 'true'); pop.textContent = '';
+    const cached = slash.cache.has(selectedId);
+    if (slash.state === 'loading' && !cached) { pop.appendChild(el('div', 'slashMsg', 'Reading commands…')); return; }
+    if (slash.state === 'error') { pop.appendChild(el('div', 'slashMsg', 'Could not read the commands: ' + slash.error)); return; }
+    if (!slash.items.length) { pop.appendChild(el('div', 'slashMsg', (slash.cache.get(selectedId) || []).length ? 'No command matches.' : 'No commands found for this agent.')); inp.removeAttribute('aria-activedescendant'); return; }
+    slash.items.forEach((c, i) => {
+      const row = el('div', 'slashItem'); row.id = 'slash-' + i; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', i === slash.idx ? 'true' : 'false');
+      row.appendChild(el('span', 'slashName', '/' + c.name));
+      if (c.hint) row.appendChild(el('span', 'slashHint', c.hint));
+      row.appendChild(el('span', 'slashDesc', c.description || (c.source === 'session' ? 'reported by Claude Code' : '')));
+      row.appendChild(el('span', 'slashSrc', (SRC_LABEL[c.source] || c.source) + (c.kind === 'skill' ? ' skill' : '')));
+      row.title = ['/' + c.name, c.hint, c.description].filter(Boolean).join('  ');
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); pickSlash(i); });
+      pop.appendChild(row);
+    });
+    inp.setAttribute('aria-activedescendant', 'slash-' + slash.idx);
+    const act = $('slash-' + slash.idx); if (act) act.scrollIntoView({ block: 'nearest' });
+  }
+  function pickSlash(i) {
+    const c = slash.items[i]; if (!c) return;
+    inp.value = '/' + c.name + ' '; closeSlash(); inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length);
+  }
+  inp.addEventListener('input', updateSlash);
+  inp.addEventListener('blur', closeSlash);
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cycleMode(); return; }
+    if (slash.open && slash.items.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault(); slash.idx = (slash.idx + (e.key === 'ArrowDown' ? 1 : -1) + slash.items.length) % slash.items.length; renderSlash(); return;
+    }
+    if (slash.open && slash.items.length && (e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.isComposing) { e.preventDefault(); pickSlash(slash.idx); return; }
+    if (slash.open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSlash(); return; }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); }
   });
-  $('planBtn').addEventListener('click', () => { const a = agents.get(selectedId); if (a) send({ type: 'permission', id: a.id, mode: a.permissionMode === 'plan' ? 'default' : 'plan' }); });
   $('mainBtn').addEventListener('click', () => { const a = agents.get(selectedId); if (a && !a.main) send({ type: 'promote', id: a.id }); });
   $('stopBtn').addEventListener('click', () => selectedId && send({ type: 'interrupt', id: selectedId }));
 
@@ -276,7 +341,7 @@
   let hireSlot;
   function openHire(slot) {
     hireSlot = typeof slot === 'number' ? slot : undefined;
-    renderTypeOptions(); $('hirePerm').value = 'default';
+    renderTypeOptions(); $('hirePerm').value = '';
     const first = agents.size === 0; $('hireNote').textContent = first ? 'The first person you hire sits at the manager desk and becomes the main agent.' : '';
     const used = new Set([...agents.values()].map((a) => a.name.toLowerCase()));
     $('hireName').value = NAMES.find((n) => !used.has(n.toLowerCase())) || '';

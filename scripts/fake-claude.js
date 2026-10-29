@@ -83,7 +83,8 @@ async function plan() {
 
 (async () => {
   const pmi = args.indexOf('--permission-mode'), pmode = pmi >= 0 ? args[pmi + 1] : undefined;
-  out({ type: 'system', subtype: 'init', session_id: sid, cwd: process.cwd(), tools: ['Bash', 'Read'], permissionMode: pmode || 'default' });
+  out({ type: 'system', subtype: 'init', session_id: sid, cwd: process.cwd(), tools: ['Bash', 'Read'], permissionMode: pmode || 'default',
+    slash_commands: ['compact', 'cost', 'clear', 'model', 'security-review', 'frontend:component'], skills: ['pdf'] });
   if (pmode === 'plan') { await plan(); return; }
   if (/code-review/i.test(prompt)) { await codeReview(); return; }
   if (/parallel|team/i.test(prompt)) { await team(); return; }
@@ -93,7 +94,7 @@ async function plan() {
   out({ type: 'user', session_id: sid, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'files' }] } });
   await wait(600);
   if (/fail/i.test(prompt)) { out({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Simulated Claude failure: the build exploded.', session_id: sid }); return; }
-  const text = `(fake claude, ${ri >= 0 ? 'resumed ' + sid : 'new session ' + sid}, cwd ${process.cwd()}) You said: ${prompt}`;
+  const text = `(fake claude, ${ri >= 0 ? 'resumed ' + sid : 'new session ' + sid}, cwd ${process.cwd()}, mode ${pmode || 'none'}) You said: ${prompt}`;
   out({ type: 'assistant', session_id: sid, message: { role: 'assistant', content: [{ type: 'text', text }] } });
   out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid });
 })();

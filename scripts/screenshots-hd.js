@@ -117,6 +117,34 @@ const FAKE = makeFakeClaudeDir();   // sessions browser shot: sample sessions on
     await page.waitForSelector('#sessList .sessRow');
     await sleep(300);
     await shot('13-claude-sessions-browser-hd.png');
+
+    // 14) "/" popup for a Claude agent working in a fake project (commands, skills and a plugin from the fake claude dir)
+    await page.keyboard.press('Escape');
+    await page.evaluate((cwd) => window.harness.send({ type: 'hire', name: 'Rin', cwd, agentType: 'claude' }), FAKE.cwds.shop);
+    await page.waitForFunction(() => window.harness.states().some((a) => a.name === 'Rin'));
+    await sendTo('Rin', 'Add a dark mode toggle to the settings page');
+    await waitState('Rin', 'done');
+    await page.focus('#input');
+    await page.keyboard.type('/');
+    await page.waitForSelector('#slashPop .slashItem');
+    await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown');
+    await sleep(300);
+    await shot('14-slash-commands-popup-hd.png');
+
+    // 15) the mode line under the input: accept edits, then Shift+Tab -> plan, side by side
+    await page.keyboard.press('Escape'); await page.fill('#input', '');
+    const clipOf = async () => { const c = await page.locator('#chat').boundingBox(), f = await page.locator('#composer').boundingBox(); return { x: c.x, y: f.y - 24, width: c.width, height: f.height + 24 }; };
+    const grab = async () => (await page.screenshot({ clip: await clipOf() })).toString('base64');
+    const accept = await grab();
+    await page.focus('#input'); await page.keyboard.press('Shift+Tab');
+    await page.waitForSelector('#modeLine.plan');
+    const plan = await grab();
+    const cmp = await ctx.newPage();
+    await cmp.setViewportSize({ width: 820, height: 200 });
+    await cmp.setContent(`<body style="margin:0;background:#14151f;color:#e6e8f5;font:14px monospace;display:flex;gap:20px;padding:20px">
+      ${[['Accept edits', accept], ['After Shift+Tab: plan', plan]].map(([t, b]) => `<figure style="margin:0"><figcaption style="margin-bottom:8px">${t}</figcaption><img style="width:380px;display:block" src="data:image/png;base64,${b}"></figure>`).join('')}</body>`);
+    await cmp.screenshot({ path: path.join(OUT, '15-permission-mode-line-hd.png'), fullPage: true }); console.log('saved 15-permission-mode-line-hd.png');
+    await cmp.close();
   } finally {
     await browser.close(); srv.kill('SIGTERM');
     try { fs.unlinkSync(DATA); } catch (_) {}

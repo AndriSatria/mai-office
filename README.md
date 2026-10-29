@@ -168,6 +168,34 @@ puts a Claude Code agent at a free desk with the recent history in its chat; you
 
 ![Claude sessions browser](screenshots/hd/13-claude-sessions-browser-hd.png)
 
+### Slash commands and permission modes
+
+Type `/` at the start of an agent's message box to pick a command (arrows, Enter or Tab, Esc, or click). The text
+you send, e.g. `/frontend:component Button`, goes to `claude -p` unchanged, so Claude Code expands it as usual.
+The list is read (never written) from:
+
+| Source | Where | Shown as |
+| --- | --- | --- |
+| user commands | `~/.claude/commands/**/*.md` (`sub/x.md` becomes `/sub:x`) | `user` |
+| user skills | `~/.claude/skills/*/SKILL.md` (`user-invocable: false` hidden) | `user skill` |
+| project | `<agent folder>/.claude/commands/**/*.md`, `<agent folder>/.claude/skills/*/SKILL.md` | `project` |
+| plugins | `~/.claude/plugins/installed_plugins.json` install paths: `commands/*.md`, `skills/*/SKILL.md`, as `/plugin:name` | `plugin` |
+| Claude Code itself | `slash_commands` + `skills` from the last run's init event, minus interactive-only ones (`/clear`, `/model`, …) | `session` |
+| Cursor agents | `<agent folder>/.cursor/commands/*.md`, `~/.cursor/commands/*.md` | `project` / `user` |
+| the office | `/plan <task>` (one plan-mode run), mock agents also get `/team` | `office` / `demo` |
+
+The description is the frontmatter `description:` or the first line of the file; `argument-hint:` is shown next to
+the name. Built-in CLI commands are only listed once Claude Code reports them in its init event, since which ones work
+with `-p` depends on the version. The list is served at `GET /api/agents/:id/commands`, to `localhost` pages only.
+
+Under the box a line shows the agent's permission mode, like the CLI: `▸▸ accept edits on (shift+tab to cycle)`.
+Shift+Tab in the box (or a click on the line) cycles `default → acceptEdits → plan → default`; `bypassPermissions`
+joins the cycle only with `HARNESS_ALLOW_BYPASS=1`. The mode is saved per agent and passed as `--permission-mode` on
+the next run. Plan mode still gathers the team at the round table. Cursor agents only have `default` and `plan`.
+
+![Slash command popup](screenshots/hd/14-slash-commands-popup-hd.png)
+![Permission mode line: accept edits, then plan](screenshots/hd/15-permission-mode-line-hd.png)
+
 ### Using it
 
 | Action | How |
@@ -231,7 +259,8 @@ Environment knobs:
 | `HOST` | `127.0.0.1` | bind address (keep it loopback unless you know what you're doing) |
 | `HARNESS_MODE` | auto | `claude` or `mock` |
 | `HARNESS_CLAUDE_BIN` | `claude` on PATH | path to the CLI |
-| `HARNESS_PERMISSION_MODE` | `acceptEdits` | passed as `--permission-mode`; `none` omits the flag. Headless runs can't answer permission prompts, so tools not pre-approved are denied — add e.g. `HARNESS_CLAUDE_ARGS="--allowedTools Bash,Read,Edit"` |
+| `HARNESS_PERMISSION_MODE` | `acceptEdits` | the mode new agents start in (each agent's mode is then switched in its chat and passed as `--permission-mode`). Headless runs can't answer permission prompts, so tools not pre-approved are denied — add e.g. `HARNESS_CLAUDE_ARGS="--allowedTools Bash,Read,Edit"` |
+| `HARNESS_ALLOW_BYPASS` | off | `1` adds `bypassPermissions` to the Shift+Tab cycle (dangerous) |
 | `HARNESS_CLAUDE_ARGS` | – | extra whitespace-separated CLI args (`--model sonnet` …) |
 | `HARNESS_PARTIAL` | off | `1` adds `--include-partial-messages` |
 | `HARNESS_DATA` | `data/agents.json` | where agents + transcripts + session ids are persisted |

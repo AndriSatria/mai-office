@@ -42,11 +42,12 @@
         </details>
         <div id="transcript"></div>
         <form id="composer">
-          <textarea id="input" rows="2" placeholder="Type a message… (Enter to send, Shift+Enter for newline)"></textarea>
+          <div id="slashPop" role="listbox" aria-label="Slash commands" hidden></div>
+          <textarea id="input" rows="2" placeholder="Type a message… (Enter to send, Shift+Enter for newline)" aria-autocomplete="list" aria-controls="slashPop" aria-expanded="false"></textarea>
+          <button type="button" id="modeLine" class="modeLine" title="Permission mode for this agent's next run. Shift+Tab in the message box also cycles it."></button>
           <div class="row">
             <span id="queueInfo" class="dim"></span>
             <button type="button" id="teamBtn" class="btn small" title="Mock agents only: spawn 2-3 parallel helpers (same as /team <task>)" hidden>👥 Team task</button>
-            <button type="button" id="planBtn" class="btn small plan" aria-pressed="false" title="Plan mode">📋 Plan</button>
             <select id="relayTo" class="relay" title="Send to another agent: the text is forwarded as input prefixed [from <name>]"><option value="">this agent</option></select>
             <button type="button" id="stopBtn" class="btn red small" hidden>■ Stop</button>
             <button type="submit" class="btn green small">Send ⏎</button>
@@ -62,7 +63,7 @@
       <label>Name <input id="hireName" maxlength="24" required autocomplete="off"></label>
       <fieldset id="typeChoice"><legend>Agent type</legend><div id="typeOptions"></div></fieldset>
       <label>Working directory <input id="hireCwd" autocomplete="off" spellcheck="false"></label>
-      <label>Permission mode <select id="hirePerm" title="Plan: the agent plans first (Claude Code --permission-mode plan) and everybody gathers at the round table"><option value="default">Normal (edit as usual)</option><option value="plan">Plan (plan first, gather at the round table)</option></select></label>
+      <label>Permission mode <select id="hirePerm" title="Plan: the agent plans first (Claude Code --permission-mode plan) and everybody gathers at the round table"><option value="">Usual (accept edits for Claude)</option><option value="default">Default (tools not pre-approved are denied)</option><option value="plan">Plan (plan first, gather at the round table)</option></select></label>
       <div id="hireNote" class="dim"></div>
       <div class="row">
         <button type="button" id="hireCancel" class="btn">Cancel</button>

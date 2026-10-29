@@ -285,7 +285,7 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
     const fake = makeFakeClaudeDir();
     const filesBefore = () => { const out = {}; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out[p] = fs.readFileSync(p, 'utf8'); } }; walk(fake.dir); return JSON.stringify(out); };
     const before = filesBefore();
-    srv = startServer({ HARNESS_MODE: 'mock', HARNESS_DATA: DATA + '.sess', HARNESS_CLAUDE_DIR: fake.dir }); await sleep(1000);
+    srv = startServer({ HARNESS_MODE: 'mock', HARNESS_DATA: DATA + '.sess', HARNESS_CLAUDE_DIR: fake.dir, HARNESS_CURSOR_DIR: fake.cursorDir }); await sleep(1000);
     const res = await fetch(`http://127.0.0.1:${PORT}/api/claude/sessions`), body = await res.json();
     const list = body.sessions || [];
     assert(res.ok && body.dir === fake.dir && list.map((x) => x.id).join() === [fake.ids.rate, fake.ids.tests, fake.ids.blog].join(), 'sessions endpoint lists the 3 real sessions newest first (sidechain + summary-only files skipped)');
@@ -305,14 +305,54 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
     const reply = await waitFor(() => log.find((m) => (m.type === 'msg' && m.id === ra.agent.id && m.msg.role === 'assistant' && /fake claude/.test(m.msg.text)) || (m.type === 'msg_update' && m.id === ra.agent.id && /fake claude/.test(m.text))), 15000);
     const rt = reply.msg ? reply.msg.text : reply.text;
     assert(rt.includes(`resumed ${fake.ids.rate}, cwd ${fake.cwds.shop}`), 'next message runs claude --resume <id> in the session cwd: ' + rt.slice(0, 120));
+
+    // "/" commands: read-only scan of the fake claude dir, the project folder and the init event
+    const cmds = async (id) => (await (await fetch(`http://127.0.0.1:${PORT}/api/agents/${id}/commands`)).json()).commands || [];
+    const cl = await cmds(ra.agent.id), by = Object.fromEntries(cl.map((c) => [c.name, c]));
+    assert(by['frontend:component'] && by['frontend:component'].source === 'user' && by['frontend:component'].description === 'Scaffold a React component with tests' && by['frontend:component'].hint === '<Name> [--size sm|lg]', 'commands: sub folder -> frontend:component, frontmatter description + argument-hint');
+    assert(by['review-pr'] && by['review-pr'].description === 'Review the open pull request for bugs', 'commands: no frontmatter -> first line is the description');
+    assert(by.changelog && by.changelog.description === 'Summarize the changelog since the last tag', 'commands: malformed frontmatter -> no fields, body line is the description');
+    assert(by['release-notes'] && by['release-notes'].kind === 'skill' && !by['hidden-helper'], 'skills: SKILL.md listed, user-invocable: false hidden');
+    assert(by['db:migrate'] && by['db:migrate'].source === 'project' && by['seed-data'] && by['seed-data'].source === 'project', 'project .claude/commands and .claude/skills listed as project');
+    assert(by['deploy-kit:ship'] && by['deploy-kit:rollback'] && by['deploy-kit:ship'].source === 'plugin' && !cl.some((c) => /other-repo/.test(c.name)), 'plugins: installed_plugins.json -> deploy-kit:ship / deploy-kit:rollback, other-project installs skipped');
+    assert(by.compact && by.compact.source === 'session' && !by.clear && !by.model && by.plan && by.plan.source === 'app', 'init slash_commands merged as session, interactive-only ones (clear, model) dropped, /plan is the office built-in');
+    const badc = await new Promise((resolve) => require('http').get({ host: '127.0.0.1', port: PORT, path: `/api/agents/${ra.agent.id}/commands`, headers: { host: 'evil.example:' + PORT } }, (r) => { r.resume(); resolve(r.statusCode); }));
+    assert(badc === 403, 'commands endpoint refuses a non-loopback Host header');
+
+    // permission modes: Shift+Tab order, persisted, reaches the CLI as --permission-mode
+    const latestA = (id) => log.filter((m) => m.type === 'agent' && m.agent.id === id).map((m) => m.agent).at(-1);
+    assert(ra.agent.permissionMode === 'acceptEdits' && ra.agent.modes.join() === 'default,acceptEdits,plan' && rt.includes('mode acceptEdits'), 'claude agents start in acceptEdits and pass --permission-mode acceptEdits: ' + (ra.agent.modes || []).join());
+    const replyAfter = async (text, from, re = /fake claude/) => { ws.send(JSON.stringify({ type: 'send', id: ra.agent.id, text })); const r = await waitFor(() => log.slice(from).find((m) => (m.type === 'msg' && m.id === ra.agent.id && m.msg.role === 'assistant' && re.test(m.msg.text)) || (m.type === 'msg_update' && m.id === ra.agent.id && re.test(m.text))), 15000); await waitFor(() => latestA(ra.agent.id).state === 'done', 15000); return r.msg ? r.msg.text : r.text; };
+    for (const mode of ['plan', 'default']) {
+      ws.send(JSON.stringify({ type: 'permission', id: ra.agent.id, mode }));
+      await waitFor(() => latestA(ra.agent.id).permissionMode === mode);
+      const t = await replyAfter('next ' + mode, log.length, mode === 'plan' ? /## Plan: next plan/ : /fake claude/);
+      assert(mode === 'plan' || t.includes('mode ' + mode), `mode ${mode} -> claude gets --permission-mode ${mode}`);
+    }
+    ws.send(JSON.stringify({ type: 'permission', id: ra.agent.id, mode: 'bypassPermissions' }));
+    await sleep(200);
+    assert(latestA(ra.agent.id).permissionMode === 'default', 'bypassPermissions is refused without HARNESS_ALLOW_BYPASS=1');
+    const vt = await replyAfter('/frontend:component Button --size lg', log.length);
+    assert(vt.includes('You said: /frontend:component Button --size lg'), 'a slash prompt reaches claude -p verbatim: ' + vt.slice(-60));
+    ws.send(JSON.stringify({ type: 'permission', id: ra.agent.id, mode: 'acceptEdits' }));
+    await waitFor(() => { try { return JSON.parse(fs.readFileSync(DATA + '.sess', 'utf8')).agents.find((x) => x.id === ra.agent.id).permissionMode === 'acceptEdits'; } catch (_) { return false; } }, 5000);
+    assert(true, 'the mode is saved per agent in the data file');
+    let mk0 = log.length;
+    ws.send(JSON.stringify({ type: 'hire', name: 'CurCmd', cwd: fake.cwds.shop, agentType: 'cursor' }));
+    const cc = (await waitFor(() => log.slice(mk0).find((m) => m.type === 'agent' && m.isNew && m.agent.name === 'CurCmd'))).agent;
+    const cn = (await cmds(cc.id)).map((c) => c.source + ':' + c.name);
+    assert(cn.includes('project:lint') && cn.includes('user:explain') && cc.modes.join() === 'default,plan' && cc.permissionMode === 'default', 'cursor: .cursor/commands (project + user) listed, only default/plan modes: ' + cn.join());
+    ws.send(JSON.stringify({ type: 'fire', id: cc.id }));
     ws.send(JSON.stringify({ type: 'resume', sessionId: fake.ids.rate }));
     await waitFor(() => log.some((m) => m.type === 'error' && /already has this session open/.test(m.message)), 5000);
     assert(true, 'resuming the same session twice points at the agent that has it');
     ws.send(JSON.stringify({ type: 'resume', sessionId: '../../etc/passwd' }));
     await waitFor(() => log.some((m) => m.type === 'error' && /not found/.test(m.message)), 5000);
     assert(true, 'unknown / malformed session ids are rejected');
+    await waitFor(() => log.some((m) => m.type === 'removed' && m.id === cc.id), 5000);
+    mk0 = log.length;
     for (let i = 1; i < MAX_AGENTS; i++) ws.send(JSON.stringify({ type: 'hire', name: 'F' + i, cwd: '/tmp', agentType: 'mock' }));
-    await waitFor(() => log.filter((m) => m.type === 'agent' && m.isNew).length === MAX_AGENTS);
+    await waitFor(() => log.slice(mk0).filter((m) => m.type === 'agent' && m.isNew).length === MAX_AGENTS - 1);
     ws.send(JSON.stringify({ type: 'resume', sessionId: fake.ids.blog }));
     const full = await waitFor(() => log.find((m) => m.type === 'error' && /office is full/.test(m.message)), 5000);
     assert(/Fire someone/.test(full.message), 'full office: resume gives a clear message: ' + full.message);

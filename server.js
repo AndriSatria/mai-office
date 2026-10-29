@@ -30,6 +30,11 @@ app.get('/api/claude/sessions', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/agents/:id/commands', (req, res) => {
+  if (!hostOk(req)) return res.status(403).json({ error: 'Forbidden host.' });
+  try { res.json({ commands: harness.commands(req.params.id) }); } catch (e) { res.status(404).json({ error: e.message }); }
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({
   server,
