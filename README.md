@@ -41,7 +41,7 @@ drawers, chair), a larger **manager desk** for the main agent, a **round table**
 
 ![manager desk and round table](screenshots/20-manager-desk-and-round-table.png)
 
-**Main agent = manager desk.** The back-right corner has one bigger walnut desk with a brass MANAGER sign, two screens, a
+**Main agent = manager desk.** The back-right corner has one bigger walnut desk with a brass MANAGER sign, one screen, a folder stack, a pen cup, a
 leather chair and a rug. The **first agent you hire is the main agent** and sits there (clicking the empty manager desk opens
 the Hire dialog with a note). Everyone else gets a regular desk. Select any other agent and press **★ Make main** to promote
 them: they swap desks with the current main agent (persisted; the selected main agent shows a **★ main** badge). Firing the
@@ -51,8 +51,8 @@ main agent promotes the next one automatically. The manager is also the last per
 its **back faces the camera**. The state therefore can't be read off the screen anymore, so it is shown three other ways:
 a glow halo + status LED + light bar on the back of the monitor (violet pulse = thinking, flickering green/cyan = working,
 steady green = done, flashing red = error, dim blue = idle), the same colour washing over the desk top, the keyboard and the
-person's face, and the usual tool chip over the head. The manager sits with their back to the camera between two screens
-that face the manager (and so face the camera), where the screen itself shows the state. Depth sorting is footprint based so the monitor correctly overlaps the person
+person's face, and the usual tool chip over the head. The manager sits with their back to the camera facing one screen
+that faces the manager (and so the camera), where the screen itself shows the state. Depth sorting is footprint based so the monitor correctly overlaps the person
 where it is in front of them.
 
 ![monitors](screenshots/21-monitors-face-the-people.png)

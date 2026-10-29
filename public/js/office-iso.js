@@ -25,7 +25,7 @@
   // 6 regular desks: two rows (x) of three (y). Chair on the -x side, desk 1x2 tiles, the character faces +x (SE) and the monitor stands
   // in front of them on the desk (its back to the camera; the screen faces the person).
   // Slot 6 = the MANAGER desk (main agent): a bigger desk against the back wall, the manager sits with their back to the camera
-  // (facing NE) so the two monitors face the camera AND the manager.
+  // (facing NE) so the monitor faces the camera AND the manager.
   // Per slot: seat (chair position), start (tiles the person steps onto when leaving), pad/gapY (dotted-lane anchors), ring (selection rect), lab (name pill).
   const SLOTS = [];
   for (let i = 0; i < MGR; i++) {
@@ -37,6 +37,7 @@
   }
   const MD = { x0: 6.1, x1: 9.0, y0: 0, y1: 1 };            // manager desk footprint (2.9 tiles wide, 1 deep), a free tile (x=9) before the coffee counter
   const MS = { x: 8.5, y: 1.5 };                            // the manager's seat
+  const MON_X = 7.9375;                                      // left edge of the manager's monitor: centred on the keyboard
   SLOTS.push({ i: MGR, row: 1, col: 4, dx: MD.x0, dy: 0, mgr: true, seat: MS, start: [[7, 1], [8, 2]],
     px: FRONT1, py: 2.45, gapY: 3.5, ring: { x0: 5.9, y0: 0.15, x1: 9.1, y1: 2.35 }, lab: { x: 8.9, y: 2.25 }, desk: { x: 7.5, y: 0.5 } });
   const COUNTER = { x0: 10, y0: 0, x1: 12, y1: 1 };
@@ -398,7 +399,7 @@
     drawMonitor(c, s, st, t, ph);
   }
 
-  /** the manager's desk: big walnut desk against the back wall, leather blotter, brass star plate, two monitors facing the camera and the manager */
+  /** the manager's desk: big walnut desk against the back wall, leather blotter, brass star plate, one monitor facing the camera and the manager, folders and a pen cup on the left */
   function drawMgrDesk(c, s, ag, t) {
     const st = ag ? (ag.away ? 'idle' : ag.state) : 'off', ph = ag ? ag.phase : 0, g = screenGlow(st, t, ph);
     box(c, MD.x0, MD.y0, MD.x1, MD.y1, 0, DESKZ, { top: '#a3703f', se: '#5a3a20', sw: '#74492a', hi: '#dcb072', dk: '#43291a' });
@@ -416,14 +417,21 @@
     const k1 = A(8.75, 0.65, DESKZ), k2 = A(8.75, 0.9, DESKZ), k3 = A(8.05, 0.9, DESKZ);
     line(c, k1[0], k1[1], k2[0], k2[1], '#9aa0b4', 1); line(c, k2[0], k2[1], k3[0], k3[1], '#9aa0b4', 1);
     for (let i = 0; i < 6; i++) for (let j = 0; j < 2; j++) { const kp = A(8.13 + i * 0.1, 0.69 + j * 0.1, DESKZ); R(c, kp[0], kp[1], 1, 1, '#8a90a6'); }
+    // left end, clear of the manager's head: folder stack and a pen cup
+    box(c, 6.2, 0.1, 6.7, 0.42, DESKZ, DESKZ + 1, { top: '#e0b44c', se: '#9c7426', sw: '#c3952f' });
+    box(c, 6.23, 0.13, 6.69, 0.4, DESKZ + 1, DESKZ + 2, { top: '#3e8ef7', se: '#1f4f96', sw: '#2c6cc4' });
+    box(c, 6.21, 0.11, 6.68, 0.41, DESKZ + 2, DESKZ + 3, { top: '#f4f1e6', se: '#b9b4a2', sw: '#d9d4c2' });
+    for (let i = 0; i < 3; i++) { const fl = A(6.32 + i * 0.1, 0.26, DESKZ + 3); R(c, fl[0] - 1, fl[1], 3, 1, '#c9c2a8'); }
+    box(c, 6.2, 0.52, 6.35, 0.67, DESKZ, DESKZ + 5, { top: '#1b1e27', se: '#2b2f3b', sw: '#3a3f4f' });
+    const pc = A(6.275, 0.595, DESKZ + 5);
+    R(c, pc[0] - 2, pc[1] - 3, 1, 3, '#e5484d'); R(c, pc[0], pc[1] - 4, 1, 4, '#f5c542'); R(c, pc[0] + 1, pc[1] - 2, 1, 2, '#3e8ef7');
     // brass star plate (front left), mug, papers
     box(c, 6.5, 0.74, 6.95, 0.84, DESKZ, DESKZ + 6, { top: '#f0d98a', se: '#8f6f22', sw: '#caa24a', hi: '#fff3b0' });
     const sp = A(6.73, 0.84, DESKZ + 3);
     for (const [dx2, dy2] of [[0, -2], [-1, -1], [0, -1], [1, -1], [-2, 0], [-1, 0], [0, 0], [1, 0], [2, 0], [-1, 1], [0, 1], [1, 1], [-1, 2], [1, 2]]) R(c, sp[0] + dx2, sp[1] + dy2, 1, 1, '#3a2a0b');
     box(c, 7.2, 0.82, 7.37, 0.95, DESKZ, DESKZ + 4, { top: '#5b3a1e', se: '#c9c9c0', sw: '#f5f5f0' });
     bl(8.85, 0.25, 8.97, 0.5, '#f4f1e6');
-    drawScreenSW(c, 6.25, 0.5, 14, st, t, ph + 0.37, false);
-    drawScreenSW(c, 7.875, 0.5, 14, st, t, ph, true);
+    drawScreenSW(c, MON_X, 0.5, 14, st, t, ph, true);
   }
 
   function drawChair(c, s) {
@@ -755,9 +763,9 @@
       if (s.mgr) {
         objs.push({ x0: MS.x - 0.4, y0: 1.1, x1: MS.x + 0.4, y1: 1.78, h: 14, pad: 2, ord: 0, tag: 'chair' + s.i, draw: (c) => drawMgrChair(c), hit: (lx, ly) => inPoly(boxHex(MS.x - 0.4, 1.1, MS.x + 0.4, 1.9, 0, 12), lx, ly), res });
         objs.push({ x0: MS.x - 0.43, y0: 1.8, x1: MS.x + 0.43, y1: 1.92, h: 24, pad: 2, ord: 3, tag: 'back' + s.i, draw: (c) => drawMgrBack(c), hit: (lx, ly) => inPoly(boxHex(MS.x - 0.43, 1.8, MS.x + 0.43, 1.92, 0, 23), lx, ly), res });
-        const m1 = [sx(6.25, 0.5), sy(6.25, 0.5, 27), 14], m2 = [sx(7.875, 0.5), sy(7.875, 0.5, 30), 14];
+        const m1 = [sx(MON_X, 0.5), sy(MON_X, 0.5, 30), 14];
         objs.push({ x0: MD.x0, y0: MD.y0, x1: MD.x1, y1: MD.y1, h: 32, pad: 2, ord: 2, tag: 'desk' + s.i, draw: (c) => drawDesk(c, s, ag, t),
-          hit: (lx, ly) => inPoly(boxHex(MD.x0, MD.y0, MD.x1, MD.y1, 0, DESKZ), lx, ly) || [m1, m2].some((m) => lx >= m[0] && lx < m[0] + m[2] && ly >= m[1] && ly < m[1] + 15), res });
+          hit: (lx, ly) => inPoly(boxHex(MD.x0, MD.y0, MD.x1, MD.y1, 0, DESKZ), lx, ly) || (lx >= m1[0] && lx < m1[0] + m1[2] && ly >= m1[1] && ly < m1[1] + 15), res });
         continue;
       }
       const cx0 = s.dx - 0.95, cy0 = s.dy + 0.55, cx1 = s.dx - 0.05, cy1 = s.dy + 1.45;
