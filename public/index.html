@@ -12,6 +12,7 @@
     <span id="modeBadge" class="badge">…</span>
     <span id="conn" class="badge off">offline</span>
     <div class="spacer"></div>
+    <button id="sessBtn" class="btn" title="Browse the Claude Code sessions on this computer and resume one at a desk">Claude sessions</button>
     <button id="hireBtn" class="btn green">＋ Hire agent</button>
     <button id="fireBtn" class="btn red" disabled>✖ Fire agent</button>
   </header>
@@ -68,6 +69,16 @@
         <button type="submit" id="hireOk" class="btn green">Hire</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="sessDlg" aria-labelledby="sessTitle">
+    <div class="sessHead">
+      <h3 id="sessTitle">Your Claude Code sessions</h3>
+      <button type="button" id="sessReload" class="btn small">Refresh</button>
+      <button type="button" id="sessClose" class="btn small">Close</button>
+    </div>
+    <p id="sessDir" class="dim"></p>
+    <p id="sessFull" class="sessFull" hidden></p>
+    <div id="sessList" aria-live="polite"></div>
   </dialog>
   <div id="toast" hidden></div>
 

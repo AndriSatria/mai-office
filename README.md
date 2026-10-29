@@ -16,7 +16,7 @@ into a chat panel and a speech bubble over their head.
 ## Isometric view
 
 The office is a 12×12 tile room seen from the south: diamond tile floor (32×16 px tiles), two back walls (windows,
-wall clock, posters, whiteboard, a shelf with a CAFE sign), up to 8 desks in two rows (monitor, keyboard, mug, lamp,
+wall clock, posters, whiteboard, a shelf with a CAFE sign), 6 desks in two rows (monitor, keyboard, mug, lamp,
 drawers, chair), a larger **manager desk** for the main agent, a **round table** with 8 chairs in the open middle, plants, and a coffee corner (counter, machine, kettle, mugs, rug).
 
 * **Projection:** `sx = ox + (x − y)·16`, `sy = oy + (x + y)·8 − z`. +x runs down-right, +y down-left. Everything is
@@ -86,7 +86,7 @@ lead**: every helper does the job **at their own desk**, and the exchange is dra
 
 * **Who helps:** each subagent is assigned to an existing colleague, **idle ones first** (fewest times helped first). If that person is away (coffee, chatting)
   they **walk back to their own desk and sit** before the job shows; idle wandering is suppressed while they help and resumes afterwards. If nobody is idle a
-  new regular, persistent agent is **auto-hired** (max 8 desks, mock type): it **walks in through the entrance door to its own desk** and stays there. If the office
+  new regular, persistent agent is **auto-hired** (max 6 desks + the manager desk, mock type): it **walks in through the entrance door to its own desk** and stays there. If the office
   is full the subagent waits (pending) and is assigned when somebody frees up. In the flat view helpers also just work from their own desks.
 * **Helping status (at the helper's desk):** a temporary **role badge + coloured lanyard/ID card** (no new look), a **tool chip**, typing animation, monitor flicker,
   a glowing pad on the floor in front of the desk and a **"helping <lead> · role"** tag under the name.
@@ -147,13 +147,34 @@ HARNESS_MODE=cursor npm start      # Cursor CLI agent (needs `cursor-agent` inst
 All three types can be mixed in one office - pick the type per agent in the **Hire agent** dialog
 (types whose CLI isn't found are flagged "CLI not found"). The type is persisted with the agent.
 
+### Resume your local Claude Code sessions
+
+The office can read the Claude Code sessions on your own PC and continue one at a desk.
+
+```bash
+git clone https://github.com/AndriSatria/mai-office
+cd mai-office
+npm install
+npm run start:claude
+```
+
+Open http://127.0.0.1:3000 and click **Claude sessions**. Sessions are grouped by project folder, newest first. **Resume in office**
+puts a Claude Code agent at a free desk with the recent history in its chat; your next message runs
+`claude -p ... --resume <session id>` in that project folder, so Claude picks up where you left off.
+
+* Sessions are read from `~/.claude/projects/*/*.jsonl` (or `$CLAUDE_CONFIG_DIR/projects`). The folder is only read, never written.
+* If the office is full (7 people), fire someone first.
+* The list is only served to `localhost` / `127.0.0.1` pages. Do not bind `HOST` to a public address on a machine with sessions you care about.
+
+![Claude sessions browser](screenshots/hd/13-claude-sessions-browser-hd.png)
+
 ### Using it
 
 | Action | How |
 | --- | --- |
 | Select an agent | Click the person (or their desk). Chat panel opens on the right. |
 | Talk to it | Type in the box, **Enter** to send (Shift+Enter = newline). Messages sent while it's busy are queued. |
-| Hire | **＋ Hire agent** (or click an empty desk): name, agent type (Claude Code / Cursor / Mock), working directory, permission mode (normal / plan). Up to 9 people: 8 desks + the manager desk (the first hire). |
+| Hire | **＋ Hire agent** (or click an empty desk): name, agent type (Claude Code / Cursor / Mock), working directory, permission mode (normal / plan). Up to 7 people: 6 desks + the manager desk (the first hire). An older data file with more people is trimmed on load; the full file is kept next to it as `.bak`. |
 | Fire | Select an agent, **✖ Fire agent**. |
 | Stop a run | **■ Stop** in the chat panel (kills the CLI process). |
 | Make main | Select an agent, **★ Make main** (swaps desks with the current main agent at the manager desk). |
@@ -285,12 +306,12 @@ Shots: `01`-`09` (hiring, thinking, working + chat, error, done + reply bubble, 
 `14-hover-empty-desk`, `15-team-code-review-4-helpers`, `16-team-peer-conversation`, `17-team-huddle`, `18-team-result-handoff`, `19-agent-to-agent-letter`, `20-manager-desk-and-round-table`, `21-monitors-face-the-people` (clip), `22-plan-mode-gathering`, `23-plan-ready-summary`. (`17-team-huddle` is the synchronized wrap-up; `07-wandering` is the walking agent.)
 
 **HD shots:** `npm run screenshots:hd` renders a 1920×1080 viewport at deviceScaleFactor 2 and saves 3840×2160 PNGs to `screenshots/hd/`
-(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`08` team: /code-review with 4 helpers, peer conversation, wrap-up, result handoff, `09` manager desk + round table, `10` monitors close-up, `11` plan gathering, `12` plan ready + summary). The canvas backing store is in device pixels with an integer
+(idle variety, working + tool chip, thinking + done bubble, coffee chat, `05`-`08` team: /code-review with 4 helpers, peer conversation, wrap-up, result handoff, `09` manager desk + round table, `10` monitors close-up, `11` plan gathering, `12` plan ready + summary, `13` Claude sessions browser built from a fake Claude folder). The canvas backing store is in device pixels with an integer
 scale (×7 at DPR 2), so nothing is resampled; the script asserts this before capturing. Tests: `npm run test:iso` (needs Playwright) and `npm run test:adapters`.
 
 ## Known limitations / ideas
 
-* Max 9 agents (8 desks + the manager desk); fixed office layout; the isometric camera is fixed (no rotation/zoom); bubbles of different agents can overlap.
+* Max 7 agents (6 desks + the manager desk); fixed office layout; the isometric camera is fixed (no rotation/zoom); bubbles of different agents can overlap.
 * Claude and Cursor modes are untested with the real CLIs; plan-mode detection (`permissionMode: plan` in init, `ExitPlanMode` tool use) is only exercised through `scripts/fake-claude.js`, and the Cursor `--mode plan` flag is a guess; no tool-permission prompts in headless mode; one process per message.
 * No auth; no markdown rendering in chat; long transcripts are capped at 300 messages per agent.
 * Next: `/clear`/new-session button, per-agent model & permission settings,

@@ -6,6 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const WebSocket = require('ws');
+const { MGR_SLOT, MAX_AGENTS } = require('../lib/harness');
+const { makeFakeClaudeDir } = require('./fake-claude-dir');
 const ROOT = path.join(__dirname, '..');
 const PORT = 3131;
 const DATA = path.join(os.tmpdir(), `mai-office-adapters-${Date.now()}.json`);
@@ -168,7 +170,7 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
 
   // ---------- manager desk (main agent), permission modes, plan mode ----------
   {
-    assert(snap.mgrSlot === 8 && ids.Cur.main === true && ids.Cur.slot === 8 && !ids.Cla.main && !ids.Moc.main && ids.Cla.slot < 8 && ids.Moc.slot < 8, 'first hire is the main agent and sits at the manager desk (slot 8), the others at regular desks: ' + ['Cur', 'Cla', 'Moc'].map((n) => n + ':' + ids[n].slot).join());
+    assert(snap.mgrSlot === MGR_SLOT && ids.Cur.main === true && ids.Cur.slot === MGR_SLOT && !ids.Cla.main && !ids.Moc.main && ids.Cla.slot < MGR_SLOT && ids.Moc.slot < MGR_SLOT, `first hire is the main agent and sits at the manager desk (slot ${MGR_SLOT}), the others at regular desks: ` + ['Cur', 'Cla', 'Moc'].map((n) => n + ':' + ids[n].slot).join());
     const latest = (id) => log.filter((m) => m.type === 'agent' && m.agent.id === id).map((m) => m.agent).at(-1);
     const planStates = (id, from) => log.slice(from).filter((m) => m.type === 'agent' && m.agent.id === id).map((m) => m.agent.plan ? m.agent.plan.state : null);
     // claude hired in plan mode -> --permission-mode plan -> init permissionMode 'plan' -> planning, then ExitPlanMode -> ready (+summary), then cleared after the hold
@@ -219,13 +221,13 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
     ws.send(JSON.stringify({ type: 'promote', id: ids.Moc.id }));
     await waitFor(() => latest(ids.Moc.id).main === true);
     await sleep(150);
-    assert(latest(ids.Moc.id).slot === 8 && latest(ids.Cur.id).slot === before.moc && latest(ids.Cur.id).main === false, `promote: manager desk swapped (Moc ${before.moc}->8, Cur 8->${before.moc})`);
+    assert(latest(ids.Moc.id).slot === MGR_SLOT && latest(ids.Cur.id).slot === before.moc && latest(ids.Cur.id).main === false, `promote: manager desk swapped (Moc ${before.moc}->${MGR_SLOT}, Cur ${MGR_SLOT}->${before.moc})`);
     // fire the main: another agent is promoted automatically
     mk = log.length;
     ws.send(JSON.stringify({ type: 'fire', id: ids.Moc.id }));
     await waitFor(() => log.slice(mk).some((m) => m.type === 'agent' && m.agent.main && m.agent.id !== ids.Moc.id));
     const nm = log.slice(mk).filter((m) => m.type === 'agent' && m.agent.main && m.agent.id !== ids.Moc.id).at(-1).agent;
-    assert(nm.slot === 8, 'firing the main agent promotes another one to the manager desk (' + nm.name + ')');
+    assert(nm.slot === MGR_SLOT, 'firing the main agent promotes another one to the manager desk (' + nm.name + ')');
     ws.send(JSON.stringify({ type: 'fire', id: pla.id }));
     await sleep(200);
   }
@@ -236,10 +238,10 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
     const { Harness } = require('../lib/harness');
     const stub = { defaultType: 'mock', types: { mock: { id: 'mock', label: 'Mock', available: true, adapter: { run() { return { cancel() {} }; } } } } };
     const h = new Harness({ dataFile: path.join(os.tmpdir(), `mai-office-unit-${Date.now()}.json`), registry: stub });
-    const names = ['P', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    const names = ['P', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].slice(0, MAX_AGENTS);
     const ag = names.map((n) => h.hire({ name: n, cwd: '/tmp', agentType: 'mock' }));
     const evs = []; h.on('event', (e) => evs.push(e));
-    for (const a of ag.slice(1)) h.send(a.id, 'busy');           // everybody but the lead is working: nobody idle, office full (8 desks + manager desk = 9)
+    for (const a of ag.slice(1)) h.send(a.id, 'busy');           // everybody but the lead is working: nobody idle, office full (6 desks + manager desk)
     h.send(ag[0].id, 'lead'); const lead = h.agents.get(ag[0].id);
     h._onEvent(lead, lead.run, { type: 'subagent_start', subId: 's1', label: 'security review', kind: 'security-reviewer' });
     const st = evs.find((e) => e.type === 'subagent' && e.op === 'start');
@@ -260,7 +262,63 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   const byName = Object.fromEntries(snap.agents.map((a) => [a.name, a.type]));
   assert(snap.defaultType === 'mock' && byName.Cur === 'cursor' && byName.Cla === 'claude' && !('Moc' in byName), 'agent types persisted across restart (Moc was fired): ' + JSON.stringify(byName));
   const cur2 = snap.agents.find((a) => a.name === 'Cur'), cla2 = snap.agents.find((a) => a.name === 'Cla');
-  assert(cur2.main && cur2.slot === 8 && !cla2.main && cla2.slot === 0 && snap.mgrSlot === 8, 'main agent / manager desk persisted across restart: ' + snap.agents.map((a) => a.name + ':' + a.slot + (a.main ? '*' : '')).join());
-  ws.close(); srv.kill('SIGTERM');
+  assert(cur2.main && cur2.slot === MGR_SLOT && !cla2.main && cla2.slot === 0 && snap.mgrSlot === MGR_SLOT, 'main agent / manager desk persisted across restart: ' + snap.agents.map((a) => a.name + ':' + a.slot + (a.main ? '*' : '')).join());
+  ws.close(); srv.kill('SIGTERM'); await sleep(500);
   try { fs.unlinkSync(DATA); } catch (_) {}
+
+  // ---------- old 9-desk data file: manager slot 8 -> MGR_SLOT, overflow kept in a .bak ----------
+  {
+    const { Harness } = require('../lib/harness');
+    const stub = { defaultType: 'mock', types: { mock: { id: 'mock', label: 'Mock', available: true, adapter: { run() { return { cancel() {} }; } } } } };
+    const f = path.join(os.tmpdir(), `mai-office-legacy-${Date.now()}.json`);
+    fs.writeFileSync(f, JSON.stringify({ version: 1, agents: Array.from({ length: 9 }, (_, i) => ({ id: 'L' + i, name: 'L' + i, cwd: '/tmp', slot: i, look: {}, type: 'mock', transcript: [] })) }));
+    const h = new Harness({ dataFile: f, registry: stub });
+    const slots = [...h.agents.values()].map((a) => a.slot).sort((x, y) => x - y);
+    assert(h.agents.size === MAX_AGENTS && h.agents.get('L8') && h.agents.get('L8').slot === MGR_SLOT && JSON.stringify(slots) === JSON.stringify([...Array(MAX_AGENTS).keys()]), `legacy file: old manager keeps the manager desk, ${MAX_AGENTS} unique desks: ${slots.join(',')}`);
+    assert(fs.existsSync(f + '.bak') && JSON.parse(fs.readFileSync(f + '.bak', 'utf8')).agents.length === 9, 'legacy file with more agents than desks is backed up before trimming');
+    h.shutdown();
+    for (const x of [f, f + '.bak']) try { fs.unlinkSync(x); } catch (_) {}
+  }
+
+  // ---------- local Claude Code sessions: list, history, resume with --resume in the session cwd ----------
+  {
+    const fake = makeFakeClaudeDir();
+    const filesBefore = () => { const out = {}; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out[p] = fs.readFileSync(p, 'utf8'); } }; walk(fake.dir); return JSON.stringify(out); };
+    const before = filesBefore();
+    srv = startServer({ HARNESS_MODE: 'mock', HARNESS_DATA: DATA + '.sess', HARNESS_CLAUDE_DIR: fake.dir }); await sleep(1000);
+    const res = await fetch(`http://127.0.0.1:${PORT}/api/claude/sessions`), body = await res.json();
+    const list = body.sessions || [];
+    assert(res.ok && body.dir === fake.dir && list.map((x) => x.id).join() === [fake.ids.rate, fake.ids.tests, fake.ids.blog].join(), 'sessions endpoint lists the 3 real sessions newest first (sidechain + summary-only files skipped)');
+    const rate = list.find((x) => x.id === fake.ids.rate), tests = list.find((x) => x.id === fake.ids.tests);
+    assert(rate.title === 'Add rate limiting to the checkout API' && rate.cwd === fake.cwds.shop && rate.count === 3, `summary line is the title, cwd comes from the lines, the malformed line is skipped (count ${rate.count})`);
+    assert(tests.title === 'Why is the orders test flaky on CI?' && tests.count === 2, 'no summary: the first real user message is the title (meta + /command lines ignored)');
+    const bad = await new Promise((resolve) => require('http').get({ host: '127.0.0.1', port: PORT, path: '/api/claude/sessions', headers: { host: 'evil.example:' + PORT } }, (r) => { r.resume(); resolve(r.statusCode); }));
+    assert(bad === 403, 'sessions endpoint refuses a non-loopback Host header (DNS rebinding)');
+
+    ({ ws, log } = await client());
+    ws.send(JSON.stringify({ type: 'resume', sessionId: fake.ids.rate }));
+    const ra = await waitFor(() => log.find((m) => m.type === 'agent' && m.isNew));
+    const tx = ra.transcript.map((m) => m.role + ':' + m.text);
+    assert(ra.agent.type === 'claude' && ra.agent.cwd === fake.cwds.shop && ra.agent.sessionId === fake.ids.rate && ra.agent.name === 'shop-api', 'resume: a claude agent with the session id and cwd sits at a free desk');
+    assert(tx.includes('user:Add rate limiting to POST /checkout, 10 requests a minute per user.') && tx.includes('tool:Read: src/routes/checkout.js') && tx.some((t) => t.startsWith('assistant:Added a token bucket')) && !tx.some((t) => /module.exports = router|broken/.test(t)), 'resume: recent history (user, assistant, tool lines) is in the chat, tool results skipped');
+    ws.send(JSON.stringify({ type: 'send', id: ra.agent.id, text: 'carry on' }));
+    const reply = await waitFor(() => log.find((m) => (m.type === 'msg' && m.id === ra.agent.id && m.msg.role === 'assistant' && /fake claude/.test(m.msg.text)) || (m.type === 'msg_update' && m.id === ra.agent.id && /fake claude/.test(m.text))), 15000);
+    const rt = reply.msg ? reply.msg.text : reply.text;
+    assert(rt.includes(`resumed ${fake.ids.rate}, cwd ${fake.cwds.shop}`), 'next message runs claude --resume <id> in the session cwd: ' + rt.slice(0, 120));
+    ws.send(JSON.stringify({ type: 'resume', sessionId: fake.ids.rate }));
+    await waitFor(() => log.some((m) => m.type === 'error' && /already has this session open/.test(m.message)), 5000);
+    assert(true, 'resuming the same session twice points at the agent that has it');
+    ws.send(JSON.stringify({ type: 'resume', sessionId: '../../etc/passwd' }));
+    await waitFor(() => log.some((m) => m.type === 'error' && /not found/.test(m.message)), 5000);
+    assert(true, 'unknown / malformed session ids are rejected');
+    for (let i = 1; i < MAX_AGENTS; i++) ws.send(JSON.stringify({ type: 'hire', name: 'F' + i, cwd: '/tmp', agentType: 'mock' }));
+    await waitFor(() => log.filter((m) => m.type === 'agent' && m.isNew).length === MAX_AGENTS);
+    ws.send(JSON.stringify({ type: 'resume', sessionId: fake.ids.blog }));
+    const full = await waitFor(() => log.find((m) => m.type === 'error' && /office is full/.test(m.message)), 5000);
+    assert(/Fire someone/.test(full.message), 'full office: resume gives a clear message: ' + full.message);
+    assert(filesBefore() === before, 'the Claude folder is untouched (read-only)');
+    ws.close(); srv.kill('SIGTERM');
+    for (const x of [DATA + '.sess']) try { fs.unlinkSync(x); } catch (_) {}
+    fs.rmSync(fake.base, { recursive: true, force: true });
+  }
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -111,3 +111,20 @@ legend { color: var(--dim); padding: 0; margin-bottom: 4px; }
 .btn.plan.on { background: #ffd84a; color: #2a1f00; border-color: #9a7a1a; }
 #hireDlg select { width: 100%; background: #14151f; color: var(--text, #e6e8f5); border: 2px solid var(--line); padding: 4px; font: inherit; }
 #hireNote:empty { display: none; }
+
+.btn:focus-visible, .typeopt:has(input:focus-visible) { outline: 2px solid var(--yellow); outline-offset: 2px; }
+#sessDlg { width: min(680px, 94vw); max-height: 82vh; overflow: auto; }
+.sessHead { display: flex; align-items: center; gap: 8px; }
+.sessHead h3 { margin: 0 auto 0 0; }
+#sessDir { margin: 6px 0 12px; font-size: 11px; word-break: break-all; }
+.sessFull { margin: 0 0 12px; padding: 6px 10px; border: 2px solid var(--red); background: #3a1a1e; color: #ffb3b6; }
+.sessMsg { padding: 18px 0; color: var(--dim); text-align: center; }
+.sessGroup { margin-bottom: 14px; }
+.sessGroup h4 { margin: 0 0 6px; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+.sessGroup h4 .dim { font-weight: 400; margin-left: 6px; font-size: 11px; }
+.sessGroup ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.sessRow { display: flex; align-items: center; gap: 10px; padding: 6px 8px; background: #12131d; border: 2px solid var(--line); }
+.sessMain { flex: 1; min-width: 0; }
+.sessName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessMeta { font-size: 11px; }
+.sessRow .btn { flex: none; }

@@ -294,6 +294,58 @@
     if (confirm(`Fire ${a.name}? Their desk and transcript will be removed.`)) send({ type: 'fire', id: a.id });
   });
 
+  // ---------- local Claude Code sessions ----------
+  let sessState = { loading: true };
+  const ago = (ms) => {
+    const m = Math.round((Date.now() - ms) / 60000);
+    if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
+    const h = Math.round(m / 60); if (h < 24) return h + ' h ago';
+    const d = Math.round(h / 24); return d < 30 ? d + ' d ago' : new Date(ms).toLocaleDateString();
+  };
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  function renderSessions() {
+    const list = $('sessList'), st = sessState, full = agents.size >= Office.MAX_SLOTS;
+    list.textContent = '';
+    $('sessDir').textContent = st.dir ? 'Read-only from ' + st.dir + '/projects' : '';
+    $('sessFull').hidden = !full;
+    $('sessFull').textContent = `The office is full (${Office.MAX_SLOTS} of ${Office.MAX_SLOTS} desks). Fire someone to resume a session here.`;
+    if (st.loading) { list.appendChild(el('p', 'sessMsg', 'Reading your sessions…')); return; }
+    if (st.error) { list.appendChild(el('p', 'sessMsg', 'Could not read the sessions: ' + st.error)); return; }
+    if (!st.sessions.length) { list.appendChild(el('p', 'sessMsg', 'No sessions found. Run claude in a project first, or point CLAUDE_CONFIG_DIR at your Claude folder.')); return; }
+    const open = new Map([...agents.values()].filter((a) => a.sessionId).map((a) => [a.sessionId, a]));
+    const groups = new Map();
+    for (const s of st.sessions) { if (!groups.has(s.cwd)) groups.set(s.cwd, []); groups.get(s.cwd).push(s); }
+    for (const [cwd, ss] of groups) {
+      const g = el('section', 'sessGroup'), h = el('h4', null, cwd.split(/[\\/]/).filter(Boolean).pop() || cwd);
+      h.appendChild(el('span', 'dim', cwd)); g.appendChild(h);
+      const ul = el('ul');
+      for (const s of ss) {
+        const li = el('li', 'sessRow'), main = el('div', 'sessMain');
+        const name = el('div', 'sessName', s.title); name.title = s.title;
+        main.append(name, el('div', 'sessMeta dim', `${ago(s.mtime)} · ${s.count} message${s.count === 1 ? '' : 's'} · ${s.id.slice(0, 8)}`));
+        const who = open.get(s.id), b = el('button', 'btn small' + (who ? '' : ' green'), who ? 'Open ' + who.name : 'Resume in office');
+        b.type = 'button';
+        b.setAttribute('aria-label', (who ? 'Open ' + who.name + ' for ' : 'Resume in office: ') + s.title);
+        if (who) b.addEventListener('click', () => { $('sessDlg').close(); select(who.id); });
+        else { b.disabled = full; b.addEventListener('click', () => { send({ type: 'resume', sessionId: s.id }); pendingSelect = true; $('sessDlg').close(); }); }
+        li.append(main, b); ul.appendChild(li);
+      }
+      g.appendChild(ul); list.appendChild(g);
+    }
+  }
+  async function loadSessions() {
+    sessState = { loading: true, dir: sessState.dir }; renderSessions();
+    try {
+      const r = await fetch('/api/claude/sessions'), j = await r.json();
+      if (!r.ok) throw new Error(j.error || r.statusText);
+      sessState = j;
+    } catch (e) { sessState = { error: e.message, dir: sessState.dir }; }
+    renderSessions();
+  }
+  $('sessBtn').addEventListener('click', () => { $('sessDlg').showModal(); loadSessions(); });
+  $('sessReload').addEventListener('click', loadSessions);
+  $('sessClose').addEventListener('click', () => $('sessDlg').close());
+
   let toastT;
   function toast(msg) { const el = $('toast'); el.textContent = msg; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { el.hidden = true; }, 4500); }
 
@@ -467,7 +519,7 @@
     if (!h) { return; }
     if (h.id) select(h.id); else if (agents.size < Office.MAX_SLOTS) openHire(h.slot);
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('hireDlg').open && document.activeElement !== $('input')) select(null); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('hireDlg').open && !$('sessDlg').open && document.activeElement !== $('input')) select(null); });
 
   // ---------- idle behaviour ----------
   // Idle agents (not selected / hovered / busy) occasionally: stretch, read, look around (at the desk),

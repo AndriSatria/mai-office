@@ -5,6 +5,7 @@ const express = require('express');
 const { WebSocketServer } = require('ws');
 const { Harness } = require('./lib/harness');
 const { createRegistry } = require('./lib/adapters');
+const claudeSessions = require('./lib/claude-sessions');
 
 const PORT = Number(process.env.PORT) || 3000;
 // Loopback by default: this server can run commands via Claude Code in arbitrary dirs.
@@ -14,9 +15,20 @@ const DATA_FILE = process.env.HARNESS_DATA || path.join(__dirname, 'data', 'agen
 const registry = createRegistry();
 const harness = new Harness({ dataFile: DATA_FILE, registry });
 
+// DNS rebinding guard: on a loopback bind only loopback Host headers may read local data or drive agents
+const LOOPBACK = /^(127\.\d+\.\d+\.\d+|localhost|\[::1\]|::1)$/;
+const hostOk = (req) => !LOOPBACK.test(HOST) || LOOPBACK.test(String(req.headers.host || '').replace(/:\d+$/, ''));
+
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/api/health', (_req, res) => res.json({ ok: true, defaultType: registry.defaultType, types: Object.fromEntries(Object.values(registry.types).map((t) => [t.id, t.available])), agents: harness.agents.size }));
+
+app.get('/api/claude/sessions', (req, res) => {
+  if (!hostOk(req)) return res.status(403).json({ error: 'Forbidden host.' });
+  try {
+    res.json({ dir: claudeSessions.claudeDir(), sessions: claudeSessions.listSessions().map(claudeSessions.publicInfo) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({
@@ -24,6 +36,7 @@ const wss = new WebSocketServer({
   path: '/ws',
   // Reject cross-origin websockets (a random web page must not drive local agents).
   verifyClient: ({ req }) => {
+    if (!hostOk(req)) return false;
     const origin = req.headers.origin;
     if (!origin) return true;
     try { return new URL(origin).host === req.headers.host; } catch (_) { return false; }
@@ -47,6 +60,7 @@ wss.on('connection', (ws) => {
         case 'promote': harness.setMain(m.id); break;
         case 'permission': harness.setPermissionMode(m.id, m.mode); break;
         case 'relay': harness.relay(m.from, m.to, m.text); break;
+        case 'resume': harness.resume(m.sessionId); break;
         default: break;
       }
     } catch (e) {

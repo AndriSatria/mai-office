@@ -18,10 +18,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const teamShots = require('./team-shots');
 const planShots = require('./plan-shots');
+const { makeFakeClaudeDir } = require('./fake-claude-dir');
+const FAKE = makeFakeClaudeDir();   // sessions browser shot: sample sessions only, never the real ~/.claude
 
 (async () => {
   const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, PORT, HARNESS_MODE: 'mock', HARNESS_DATA: DATA, HARNESS_DEFAULT_CWD: ROOT,
-    HARNESS_CLAUDE_BIN: path.join(__dirname, 'fake-claude.js'), HARNESS_CURSOR_BIN: path.join(__dirname, 'fake-cursor-agent.js') } });
+    HARNESS_CLAUDE_DIR: FAKE.dir, HARNESS_CLAUDE_BIN: path.join(__dirname, 'fake-claude.js'), HARNESS_CURSOR_BIN: path.join(__dirname, 'fake-cursor-agent.js') } });
   await sleep(1200);
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });
@@ -105,8 +107,19 @@ const planShots = require('./plan-shots');
     await planShots(page, 'Ken', { overview: () => shot('09-manager-desk-and-round-table-hd.png'),
       monitors: async (clip) => { await page.screenshot({ path: path.join(OUT, '10-monitors-face-the-people-hd.png'), clip }); console.log('saved 10-monitors-face-the-people-hd.png'); },
       gather: () => shot('11-plan-mode-gathering-hd.png'), ready: () => shot('12-plan-ready-summary-hd.png') }, sleep, ROOT);
+
+    // 13) the Claude Code sessions browser (fake sessions), with free desks so "Resume in office" is live
+    await idle();
+    await page.evaluate(() => { const vs = [...window.harness.agents.values()].filter((a) => !a.main).slice(-2);
+      for (const a of vs) window.harness.send({ type: 'fire', id: a.id }); window.harness.select(null); });
+    await page.waitForFunction(() => window.harness.agents.size <= 5);
+    await page.click('#sessBtn');
+    await page.waitForSelector('#sessList .sessRow');
+    await sleep(300);
+    await shot('13-claude-sessions-browser-hd.png');
   } finally {
     await browser.close(); srv.kill('SIGTERM');
     try { fs.unlinkSync(DATA); } catch (_) {}
+    fs.rmSync(FAKE.base, { recursive: true, force: true });
   }
 })().catch((e) => { console.error(e); process.exit(1); });
