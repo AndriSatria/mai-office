@@ -7,10 +7,10 @@
 // shots = { overview, monitors, gather, ready }; shots.monitors receives a clip rect {x,y,width,height} in CSS px.
 module.exports = async function planShots(page, ownerName, shots, sleep, root) {
   const names = ['Barbara', 'Dennis', 'Edsger', 'Margaret', 'Tim', 'Radia', 'Guido', 'Bjarne'];
-  // fill the office up to 9 people (8 desks + the manager desk)
+  // fill the office: 6 desks + the manager desk
   for (const n of names) {
     const cnt = await page.evaluate(() => window.harness.agents.size);
-    if (cnt >= 9) break;
+    if (cnt >= 7) break;
     await page.evaluate(([nm, cwd]) => window.harness.send({ type: 'hire', name: nm, cwd, agentType: 'mock' }), [n, root]);
     await page.waitForFunction((nm) => window.harness.states().some((a) => a.name === nm), n);
     await sleep(120);

@@ -30,32 +30,49 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
       // empty office: every desk top is an empty-slot hit, nothing outside the room is
       for (let i = 0; i < O.MAX_SLOTS; i++) { const [x, y] = O.deskPoint(i); const h = O.hitTest(x, y, []); out.empty.push(h && h.slot === i); }
       out.outside = O.hitTest(5, 5, []);
-      // all 8 desks occupied: the person (head) and the desk top each resolve to that agent
-      const all = Array.from({ length: 9 }, (_, i) => mk(i));
-      for (let i = 0; i < 9; i++) {
+      // every desk occupied: the person (head) and the desk top each resolve to that agent
+      const N = O.MAX_SLOTS, M = O.MGR, all = Array.from({ length: N }, (_, i) => mk(i));
+      for (let i = 0; i < N; i++) {
         const s = O.SLOTS[i], [px, py] = O.project(s.seat.x, s.seat.y, 8 + 14);
         const head = O.hitTest(px, py, all), [dx, dy] = O.deskPoint(i), desk = O.hitTest(dx, dy, all);
         out.seated.push(head && head.id === 'a' + i && desk && desk.id === 'a' + i);
       }
       // a walker standing right in front of desk 1 is drawn on top of it and must win the hit test
       const s1 = O.SLOTS[1], wx = s1.dx + 1.5, wy = s1.dy + 1.1;
-      const walker = { id: 'w', slot: 7, away: true, x: wx, y: wy, face: 1 };
-      const list = all.slice(0, 7).concat([walker, all[8]]);
+      const walker = { id: 'w', slot: M - 1, away: true, x: wx, y: wy, face: 1 };
+      const list = all.slice(0, M - 1).concat([walker, all[M]]);
       const [fx, fy] = O.project(wx, wy, 14);
       out.front = O.hitTest(fx, fy, list);
       // the same pixel with the walker standing far behind the desk must hit the desk instead
-      const back = { id: 'w', slot: 7, away: true, x: s1.dx - 0.5 - 1, y: 5.5, face: 0 };
-      out.behind = O.hitTest(fx, fy, all.slice(0, 7).concat([back, all[8]]));
+      const back = { id: 'w', slot: M - 1, away: true, x: s1.dx - 0.5 - 1, y: 5.5, face: 0 };
+      out.behind = O.hitTest(fx, fy, all.slice(0, M - 1).concat([back, all[M]]));
       // chair hits belong to that slot's agent
       const [cx, cy] = O.project(s1.dx - 0.5, s1.dy + 1.0, 4); out.chair = O.hitTest(cx, cy, all);
-      return out;
+      out.n = N; return out;
     });
-    assert(r.empty.every(Boolean), 'empty desks are hittable at their projected desk tops (8 desks + the manager desk, 9/9)');
+    assert(r.n === 7 && r.empty.every(Boolean), `empty desks are hittable at their projected desk tops (6 desks + the manager desk, ${r.empty.filter(Boolean).length}/${r.n})`);
     assert(r.outside === null, 'floor outside any object is not a hit');
-    assert(r.seated.every(Boolean), 'seated agents + their desks resolve to the right agent (9/9, manager desk included)');
+    assert(r.seated.every(Boolean), `seated agents + their desks resolve to the right agent (${r.seated.filter(Boolean).length}/${r.n}, manager desk included)`);
     assert(r.front && r.front.id === 'w', 'a walker in front of a desk is picked before the desk (front-most first)');
     assert(r.behind && r.behind.id === 'a1', 'the desk is picked when the walker is behind it');
     assert(r.chair && r.chair.id === 'a1', 'chair hit resolves to the seated agent');
+
+    // ---- furniture footprints never overlap (manager desk, cafe counter, desks + chairs, round table + stools, plants) ----
+    const ov = await page.evaluate(() => {
+      const O = window.Office, T = O.TABLE, R = 2.0, fp = [];
+      for (const s of O.SLOTS) if (!s.mgr) fp.push(['desk' + s.i, s.dx - 1, s.dy, s.dx + 1, s.dy + 2]);
+      fp.push(['manager desk', O.MD.x0, O.MD.y0, O.MD.x1, O.MD.y1], ['manager chair', O.SLOTS[O.MGR].seat.x - 0.45, 1.1, O.SLOTS[O.MGR].seat.x + 0.45, 1.95]);
+      fp.push(['cafe counter', O.COUNTER.x0, O.COUNTER.y0, O.COUNTER.x1, O.COUNTER.y1], ['round table', T.x - R, T.y - R, T.x + R, T.y + R]);
+      for (const p of O.PLANTS) fp.push(['plant', p.x + 0.1, p.y + 0.1, p.x + 0.9, p.y + 0.9]);
+      const hits = [];
+      for (let i = 0; i < fp.length; i++) for (let j = i + 1; j < fp.length; j++) {
+        const a = fp[i], b = fp[j];
+        if (a[1] < b[3] && b[1] < a[3] && a[2] < b[4] && b[2] < a[4]) hits.push(a[0] + ' x ' + b[0]);
+      }
+      return { hits, gap: O.COUNTER.x0 - O.MD.x1 };
+    });
+    assert(ov.hits.length === 0, 'no two pieces of furniture overlap ' + JSON.stringify(ov.hits));
+    assert(ov.gap >= 0.9, `a walkable tile separates the manager desk from the cafe counter (gap ${ov.gap} tiles)`);
 
     // ---- pathfinding avoids furniture; depth order of a walker ----
     const p = await page.evaluate(() => {
@@ -79,18 +96,18 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
         const last = pts[pts.length - 1];
         if (Math.abs(last.x - spot.x) > 0.6 || Math.abs(last.y - spot.y) > 0.6) bad.push(['end', s.i]);
       }
-      // depth: walking along every path (with all 8 desks occupied) the hit at the walker's torso is the walker itself
+      // depth: walking along every path (with the regular desks occupied) the hit at the walker's torso is the walker itself
       // unless a desk/plant that is genuinely in front covers that pixel
-      const all = Array.from({ length: 7 }, (_, i) => ({ id: 'a' + i, slot: i, away: false, x: 0, y: 0 }));
+      const all = Array.from({ length: O.MGR - 1 }, (_, i) => ({ id: 'a' + i, slot: i, away: false, x: 0, y: 0 }));
       let own = 0, other = 0;
       for (const [x, y] of samples) {
         const [px, py] = O.project(x, y, 16);
-        const h = O.hitTest(px, py, all.concat([{ id: 'w', slot: 7, away: true, x, y, face: 0 }]));
+        const h = O.hitTest(px, py, all.concat([{ id: 'w', slot: O.MGR - 1, away: true, x, y, face: 0 }]));
         if (h && h.id === "w") own++; else { other++; (window.__miss = window.__miss || []).push([x.toFixed(2), y.toFixed(2), JSON.stringify(h)]); }
       }
-      return { n, bad: bad.slice(0, 5), axis, own, other, miss: (window.__miss || []).slice(0, 12) };
+      return { n, slots: O.SLOTS.length, bad: bad.slice(0, 5), axis, own, other, miss: (window.__miss || []).slice(0, 12) };
     });
-    assert(p.n === 9 * 3 && p.bad.length === 0, `${p.n} paths (9 desks x coffee/chat spots) never touch blocked tiles ${p.bad.length ? JSON.stringify(p.bad) : ''}`);
+    assert(p.n === p.slots * 3 && p.bad.length === 0, `${p.n} paths (${p.slots} desks x coffee/chat spots) never touch blocked tiles ${p.bad.length ? JSON.stringify(p.bad) : ''}`);
     if (p.miss.length) console.log('  misses:', JSON.stringify(p.miss));
     assert(p.axis, 'path segments follow the tile grid (axis aligned)');
     assert(p.own / (p.own + p.other) > 0.97, `walker torso is the front-most hit along paths (${p.own}/${p.own + p.other})`);
@@ -100,20 +117,21 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     const mbox0 = await page.locator('#office').boundingBox();
     const [mdx, mdy] = await page.evaluate(([box]) => { const O = window.Office; const [x, y] = O.deskPoint(O.MGR); return [box.x + (x / O.W) * box.width, box.y + (y / O.H) * box.height]; }, [mbox0]);
     await page.mouse.move(mdx, mdy); await sleep(150);
-    assert((await page.evaluate(() => window.harness.hover.slot)) === 8, 'hovering the (empty) manager desk targets slot 8');
+    const MGR = await page.evaluate(() => window.Office.MGR);
+    assert((await page.evaluate(() => window.harness.hover.slot)) === MGR, `hovering the (empty) manager desk targets slot ${MGR}`);
     await page.mouse.click(mdx, mdy); await sleep(200);
     assert(await page.evaluate(() => document.getElementById('hireDlg').open && /main/i.test(document.getElementById('hireNote').textContent)), 'clicking the manager desk opens the hire dialog with the "main agent" note');
     await page.fill('#hireName', 'Ada'); await page.click('#hireOk'); await sleep(500);
     const ada0 = await page.evaluate(() => { const a = [...window.harness.agents.values()].find((x) => x.name === 'Ada'); return a && { slot: a.slot, main: a.main }; });
-    assert(ada0 && ada0.slot === 8 && ada0.main === true, 'hiring at the manager desk makes the first agent main (slot 8)');
+    assert(ada0 && ada0.slot === MGR && ada0.main === true, `hiring at the manager desk makes the first agent main (slot ${MGR})`);
     await page.evaluate(() => window.harness.send({ type: 'hire', name: 'Linus', cwd: '/tmp' })); await sleep(300);
     const lin = await page.evaluate(() => { const a = [...window.harness.agents.values()].find((x) => x.name === 'Linus'); return { slot: a.slot, main: a.main }; });
     assert(lin.slot === 0 && !lin.main, 'the next hire takes a regular desk (slot 0), not the manager desk');
     await sleep(500);
     // the manager at the desk resolves from head, desk and chair-back hits
     const mh = await page.evaluate(() => {
-      const O = window.Office, mgr = { id: 'm', slot: 8, away: false, x: 0, y: 0, main: true }, out = {};
-      const [hx, hy] = O.project(O.SLOTS[8].seat.x, O.SLOTS[8].seat.y, 8 + 14), [dx, dy] = O.deskPoint(8);
+      const O = window.Office, mgr = { id: 'm', slot: O.MGR, away: false, x: 0, y: 0, main: true }, out = {};
+      const [hx, hy] = O.project(O.SLOTS[O.MGR].seat.x, O.SLOTS[O.MGR].seat.y, 8 + 14), [dx, dy] = O.deskPoint(O.MGR);
       out.head = O.hitTest(hx, hy, [mgr]); out.desk = O.hitTest(dx, dy, [mgr]);
       return { head: out.head && out.head.id, desk: out.desk && out.desk.id };
     });
@@ -139,16 +157,16 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     // ---- desk-to-desk routes for the dotted lines / flying papers never cross furniture ----
     const rt = await page.evaluate(() => {
       const O = window.Office, bad = [], offs = [-0.2, -0.1, 0, 0.1, 0.2, 0.32]; let n = 0;
-      for (let a = 0; a < 9; a++) for (let b = 0; b < 9; b++) if (a !== b) for (const off of offs) {
+      for (let a = 0; a < O.MAX_SLOTS; a++) for (let b = 0; b < O.MAX_SLOTS; b++) if (a !== b) for (const off of offs) {
         const pts = O.deskRoute(a, b, off); n++;
         for (let i = 1; i < pts.length; i++) {
           const p = pts[i - 1], q = pts[i], N = Math.max(2, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) * 8));
           for (let k = 0; k <= N; k++) { const x = p[0] + ((q[0] - p[0]) * k) / N, y = p[1] + ((q[1] - p[1]) * k) / N; if (O.isBlocked(Math.floor(x), Math.floor(y))) bad.push([a, b, off, x.toFixed(2), y.toFixed(2)]); }
         }
       }
-      return { n, bad: bad.slice(0, 3), nbad: bad.length };
+      return { n, slots: O.MAX_SLOTS, bad: bad.slice(0, 3), nbad: bad.length };
     });
-    assert(rt.nbad === 0, `all ${rt.n} desk-to-desk dotted routes (9 desks, every pair, every lane) stay on free floor ${JSON.stringify(rt.bad)}`);
+    assert(rt.nbad === 0, `all ${rt.n} desk-to-desk dotted routes (${rt.slots} desks, every pair, every lane) stay on free floor ${JSON.stringify(rt.bad)}`);
 
     // ---- live /code-review: helpers work at THEIR OWN desks, papers fly along dotted lines, wrap-up at each desk ----
     for (const n of ['Grace', 'Alan']) { await page.evaluate((n) => window.harness.send({ type: 'hire', name: n, cwd: '/tmp' }), n); await sleep(250); }
@@ -231,7 +249,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     await page.fill('#input', '/plan add a dark mode toggle'); await page.press('#input', 'Enter');
     await page.waitForFunction(() => window.harness.plan().state === 'planning', null, { timeout: 10000 });
     assert(true, 'mock "/plan <task>" puts the agent into plan mode (planning)');
-    const want = Math.min(total - 1, 8);
+    const want = Math.min(total - 1, geo.seats);
     let sawDrink = false, sawChat = false, linusSeated = false;
     const t0 = Date.now(); let pl;
     for (;;) {
@@ -262,7 +280,7 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     const gs = await page.evaluate((id) => window.harness.states().find((a) => a.id === id).slot, ids0.Grace);
     await page.click('#mainBtn'); await sleep(600);
     const sw = await page.evaluate((ids) => ({ g: window.harness.states().find((a) => a.id === ids.Grace), a: window.harness.states().find((a) => a.id === ids.Ada) }), ids0);
-    assert(sw.g.main && sw.g.slot === 8 && !sw.a.main && sw.a.slot === gs && sw.g.home && sw.a.home, `Make main: Grace -> manager desk, Ada -> desk ${gs}`);
+    assert(sw.g.main && sw.g.slot === MGR && !sw.a.main && sw.a.slot === gs && sw.g.home && sw.a.home, `Make main: Grace -> manager desk, Ada -> desk ${gs}`);
     assert(await page.evaluate(() => document.getElementById('mainBtn').hidden && !document.getElementById('mainBadge').hidden), 'the main agent shows the ★ main badge instead of the button');
 
     // integer pixel scale

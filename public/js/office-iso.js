@@ -14,7 +14,7 @@
   const { R, shade, rnd, disc, line, stateIcon, drawTalk, pillText, measurePill, drawBubble, TYPE_BADGE, STATE_COL } = F.shared;
 
   const W = 400, H = 264, OX = 200, OY = 62, GX = 12, GY = 12, WH = 56;
-  const SEAT = 8, DESKZ = 13, MAX_SLOTS = 9, MGR = 8, SPEED = 2.6; // SPEED in tiles/second; slot 8 = the manager desk (main agent)
+  const SEAT = 8, DESKZ = 13, MAX_SLOTS = 7, MGR = 6, SPEED = 2.6; // SPEED in tiles/second; slot 6 = the manager desk (main agent)
   const AISLE = 3.55, FRONT1 = 6.55;      // desk-to-desk dotted lanes: the aisle between the rows / the strip in front of row 1
   const sx = (x, y) => OX + Math.round((x - y) * 16);
   const sy = (x, y, z) => OY + Math.round((x + y) * 8) - (z || 0);
@@ -22,35 +22,35 @@
   const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 
   // ---------- layout ----------
-  // 8 regular desks: two rows (x) of four (y). Chair on the -x side, desk 1x2 tiles, the character faces +x (SE) and the monitor stands
+  // 6 regular desks: two rows (x) of three (y). Chair on the -x side, desk 1x2 tiles, the character faces +x (SE) and the monitor stands
   // in front of them on the desk (its back to the camera; the screen faces the person).
-  // Slot 8 = the MANAGER desk (main agent): a bigger desk against the back wall, the manager sits with their back to the camera
+  // Slot 6 = the MANAGER desk (main agent): a bigger desk against the back wall, the manager sits with their back to the camera
   // (facing NE) so the two monitors face the camera AND the manager.
   // Per slot: seat (chair position), start (tiles the person steps onto when leaving), pad/gapY (dotted-lane anchors), ring (selection rect), lab (name pill).
   const SLOTS = [];
-  for (let i = 0; i < 8; i++) {
-    const row = i >> 2, col = i & 3, dx = row ? 5 : 2, dy = 1 + 3 * col;
+  for (let i = 0; i < MGR; i++) {
+    const row = Math.floor(i / 3), col = i % 3, dx = row ? 5 : 2, dy = 1 + 3 * col;
     SLOTS.push({ i, row, col, dx, dy, seat: { x: dx - 0.5, y: dy + 1 }, start: [[dx - 1, dy], [dx - 1, dy + 1]],
-      px: row ? FRONT1 : AISLE, py: dy + 1, gapY: col < 3 ? dy + 2.5 : dy - 0.5,
+      px: row ? FRONT1 : AISLE, py: dy + 1, gapY: col < 2 ? dy + 2.5 : dy - 0.5,
       ring: { x0: Math.max(dx - 1.15, 0.15), y0: Math.max(dy - 0.2, 0.15), x1: Math.min(dx + 1.3, GX - 0.15), y1: Math.min(dy + 2.2, GY - 0.15) },
       lab: { x: dx - 0.45, y: dy + 1.75 }, desk: { x: dx + 0.5, y: dy + 1 } });
   }
-  const MD = { x0: 6.1, x1: 9.0, y0: 0, y1: 1 };            // manager desk footprint (2.9 tiles wide, 1 deep), left of the coffee counter
+  const MD = { x0: 6.1, x1: 9.0, y0: 0, y1: 1 };            // manager desk footprint (2.9 tiles wide, 1 deep), a free tile (x=9) before the coffee counter
   const MS = { x: 8.5, y: 1.5 };                            // the manager's seat
   SLOTS.push({ i: MGR, row: 1, col: 4, dx: MD.x0, dy: 0, mgr: true, seat: MS, start: [[7, 1], [8, 2]],
     px: FRONT1, py: 2.45, gapY: 3.5, ring: { x0: 5.9, y0: 0.15, x1: 9.1, y1: 2.35 }, lab: { x: 8.9, y: 2.25 }, desk: { x: 7.5, y: 0.5 } });
-  const COUNTER = { x0: 9, y0: 0, x1: 12, y1: 1 };
+  const COUNTER = { x0: 10, y0: 0, x1: 12, y1: 1 };
   const PLANTS = [{ x: 0, y: 0 }, { x: 11, y: 5 }, { x: 11, y: 11 }, { x: 0, y: 11 }, { x: 7, y: 11 }];
   // round meeting table in the open area (plan mode: everybody gathers here)
   const TABLE = { x: 9, y: 7.5, r: 1.2, h: 15 };
   const SEATS = [   // stools around the table, front-facing (camera sees the face) first; face = direction the person looks (towards the table)
     [-1.31, -1.31, 0], [0, -1.85, 1], [-1.85, 0, 0], [1.31, -1.31, 1], [-1.31, 1.31, 0], [1.85, 0, 2], [0, 1.85, 3], [1.31, 1.31, 3],
   ].map(([ox, oy, face], i) => ({ i, x: TABLE.x + ox, y: TABLE.y + oy, face }));
-  const RUG = { x0: 8, y0: 1, x1: 11, y1: 4 };
+  const RUG = { x0: 9.1, y0: 1.1, x1: 11.9, y1: 4 };
   // standing spots (tile centres) near the coffee corner + the direction they face
   const SPOTS = {
-    coffee: [{ x: 9.5, y: 1.5, face: 1 }],
-    chat: [{ x: 8.5, y: 3.5, face: 0 }, { x: 9.5, y: 3.5, face: 2 }],
+    coffee: [{ x: 10.5, y: 1.5, face: 1 }],
+    chat: [{ x: 9.5, y: 3.5, face: 0 }, { x: 10.5, y: 3.5, face: 2 }],
     door: { x: 0.5, y: 4.7, face: 0 },
   };
 
@@ -231,7 +231,7 @@
     rug(RUG.x0, RUG.y0, RUG.x1, RUG.y1, '#6e343b');
     rug(RUG.x0 + 0.12, RUG.y0 + 0.12, RUG.x1 - 0.12, RUG.y1 - 0.12, '#a45560');
     rug(RUG.x0 + 0.38, RUG.y0 + 0.38, RUG.x1 - 0.38, RUG.y1 - 0.38, '#8d4650');
-    for (let k = 0; k < 6; k++) rug(RUG.x0 + 0.5 + k * 0.4, RUG.y0 + 0.5, RUG.x0 + 0.62 + k * 0.4, RUG.y1 - 0.5, '#a45560');
+    for (let k = 0; k < 5; k++) rug(RUG.x0 + 0.5 + k * 0.4, RUG.y0 + 0.5, RUG.x0 + 0.62 + k * 0.4, RUG.y1 - 0.5, '#a45560');
     rug(0.05, 4.1, 0.95, 5.3, '#4a3a33'); rug(0.12, 4.18, 0.88, 5.22, '#6b5448');
     rug(RUG.x0 + 0.62, RUG.y0 + 0.62, RUG.x1 - 0.62, RUG.y0 + 0.74, '#d9a86b'); rug(RUG.x0 + 0.62, RUG.y1 - 0.74, RUG.x1 - 0.62, RUG.y1 - 0.62, '#d9a86b');
 
@@ -260,8 +260,8 @@
     pr(c, ...LW, 80, 83, 21, 24, '#f5c542');
     // poster (right wall) + whiteboard & poster (left wall)
     // brass "MANAGER" sign above the manager desk (right wall)
-    pr(c, ...RW, 90, 128, 33, 48, '#2b3149'); pr(c, ...RW, 91, 127, 34, 47, '#caa24a'); pr(c, ...RW, 91, 127, 46, 47, '#f0d98a'); pr(c, ...RW, 91, 127, 34, 35, '#8f6f22');
-    'MANAGER'.split('').forEach((ch, n) => GLYPH[ch].forEach((row, j) => { for (let i = 0; i < 3; i++) if (row[i] === '#') pr(c, ...RW, 96 + n * 4 + i, 97 + n * 4 + i, 37 + (4 - j), 38 + (4 - j), '#3a2a0b'); }));
+    pr(c, ...RW, 102, 140, 33, 48, '#2b3149'); pr(c, ...RW, 103, 139, 34, 47, '#caa24a'); pr(c, ...RW, 103, 139, 46, 47, '#f0d98a'); pr(c, ...RW, 103, 139, 34, 35, '#8f6f22');
+    'MANAGER'.split('').forEach((ch, n) => GLYPH[ch].forEach((row, j) => { for (let i = 0; i < 3; i++) if (row[i] === '#') pr(c, ...RW, 108 + n * 4 + i, 109 + n * 4 + i, 37 + (4 - j), 38 + (4 - j), '#3a2a0b'); }));
     pr(c, ...LW, 128, 146, 22, 46, '#2b3149'); pr(c, ...LW, 129, 145, 23, 45, '#f2e6c8');
     pr(c, ...LW, 132, 142, 31, 42, '#e93d82'); pr(c, ...LW, 134, 140, 34, 39, '#f5c542'); pr(c, ...LW, 132, 142, 26, 27, '#6b5b3a'); pr(c, ...LW, 132, 139, 28, 29, '#6b5b3a');
     pr(c, ...LW, 152, 190, 22, 48, '#cdd3e6'); pr(c, ...LW, 153, 189, 23, 47, '#f7f8fc');
@@ -280,27 +280,27 @@
     };
     clock(LW, 108, 36, 7, 8);
     // shelf + cups + sign above the coffee counter (right wall)
-    pr(c, ...RW, 134, 188, 34, 37, '#5e3d27'); pr(c, ...RW, 134, 188, 36, 37, '#7d5a3d');
-    pr(c, ...RW, 138, 143, 37, 42, '#f5f5f0'); pr(c, ...RW, 143, 144, 38, 41, '#f5f5f0'); pr(c, ...RW, 148, 153, 37, 42, '#e93d82'); pr(c, ...RW, 153, 154, 38, 41, '#e93d82');
-    pr(c, ...RW, 172, 178, 37, 44, '#12a594'); pr(c, ...RW, 180, 185, 37, 42, '#f5a524');
-    pr(c, ...RW, 146, 178, 44, 53, '#2b3149'); pr(c, ...RW, 147, 177, 45, 52, '#f5c542');
-    'CAFE'.split('').forEach((ch, n) => GLYPH[ch].forEach((row, j) => { for (let i = 0; i < 3; i++) if (row[i] === '#') pr(c, ...RW, 156 + n * 4 + i, 157 + n * 4 + i, 46 + (4 - j), 47 + (4 - j), '#7a5236'); }));
+    pr(c, ...RW, 162, 190, 34, 37, '#5e3d27'); pr(c, ...RW, 162, 190, 36, 37, '#7d5a3d');
+    pr(c, ...RW, 164, 169, 37, 42, '#f5f5f0'); pr(c, ...RW, 169, 170, 38, 41, '#f5f5f0'); pr(c, ...RW, 172, 177, 37, 42, '#e93d82'); pr(c, ...RW, 177, 178, 38, 41, '#e93d82');
+    pr(c, ...RW, 180, 184, 37, 44, '#12a594'); pr(c, ...RW, 185, 189, 37, 42, '#f5a524');
+    pr(c, ...RW, 160, 190, 44, 53, '#2b3149'); pr(c, ...RW, 161, 189, 45, 52, '#f5c542');
+    'CAFE'.split('').forEach((ch, n) => GLYPH[ch].forEach((row, j) => { for (let i = 0; i < 3; i++) if (row[i] === '#') pr(c, ...RW, 168 + n * 4 + i, 169 + n * 4 + i, 46 + (4 - j), 47 + (4 - j), '#7a5236'); }));
 
     // coffee counter (static: nobody can stand behind it)
     box(c, COUNTER.x0, COUNTER.y0, COUNTER.x1, COUNTER.y1, 0, 14, { top: '#ead2a8', se: '#5e3d27', sw: '#7a5236', hi: '#fff0d2', dk: '#4a2f1d' });
     const cp = [sx(COUNTER.x0, COUNTER.y1), sy(COUNTER.x0, COUNTER.y1, 0)];
-    pr(c, cp[0], cp[1], 1, 0, 64, 0, 2, '#4a2f1d');
-    for (let k = 0; k < 4; k++) { pr(c, cp[0], cp[1], 1, k * 16 + 2, k * 16 + 14, 3, 11, '#6a452e'); pr(c, cp[0], cp[1], 1, k * 16 + 3, k * 16 + 13, 4, 10, '#8a6040'); pr(c, cp[0], cp[1], 1, k * 16 + 7, k * 16 + 10, 8, 9, '#e5c07a'); }
+    pr(c, cp[0], cp[1], 1, 0, 32, 0, 2, '#4a2f1d');
+    for (let k = 0; k < 2; k++) { pr(c, cp[0], cp[1], 1, k * 16 + 2, k * 16 + 14, 3, 11, '#6a452e'); pr(c, cp[0], cp[1], 1, k * 16 + 3, k * 16 + 13, 4, 10, '#8a6040'); pr(c, cp[0], cp[1], 1, k * 16 + 7, k * 16 + 10, 8, 9, '#e5c07a'); }
     // coffee machine
-    box(c, 9.0, 0.12, 9.8, 0.86, 14, 31, { top: '#555c70', se: '#2a2e3b', sw: '#3a3f4f', hi: '#6a7188' });
-    const mp = [sx(9.0, 0.86), sy(9.0, 0.86, 0)];
+    box(c, 10.0, 0.12, 10.8, 0.86, 14, 31, { top: '#555c70', se: '#2a2e3b', sw: '#3a3f4f', hi: '#6a7188' });
+    const mp = [sx(10.0, 0.86), sy(10.0, 0.86, 0)];
     pr(c, mp[0], mp[1], 1, 1, 11, 25, 29, '#242833'); pr(c, mp[0], mp[1], 1, 2, 4, 26, 28, '#ff5a5a'); pr(c, mp[0], mp[1], 1, 6, 8, 26, 28, '#5ff2a5');
     pr(c, mp[0], mp[1], 1, 2, 10, 18, 22, '#1b1e27'); pr(c, mp[0], mp[1], 1, 5, 7, 14, 18, '#999');
     pr(c, mp[0], mp[1], 1, 4, 8, 14, 19, '#f5f5f0'); pr(c, mp[0], mp[1], 1, 4, 8, 17, 19, '#5b3a1e');
     // kettle + mugs on the counter
-    box(c, 10.2, 0.2, 10.6, 0.6, 14, 24, { top: '#e6e9f2', se: '#9aa0b4', sw: '#c8ccd8', hi: '#fff' });
-    box(c, 10.9, 0.3, 11.15, 0.55, 14, 18, { top: '#ff8b8f', se: '#a8262c', sw: '#e5484d' });
-    box(c, 11.3, 0.45, 11.55, 0.7, 14, 18, { top: '#8fb8ff', se: '#2a5fb8', sw: '#3e8ef7' });
+    box(c, 11.0, 0.2, 11.35, 0.55, 14, 24, { top: '#e6e9f2', se: '#9aa0b4', sw: '#c8ccd8', hi: '#fff' });
+    box(c, 11.5, 0.25, 11.72, 0.47, 14, 18, { top: '#ff8b8f', se: '#a8262c', sw: '#e5484d' });
+    box(c, 11.5, 0.6, 11.72, 0.82, 14, 18, { top: '#8fb8ff', se: '#2a5fb8', sw: '#3e8ef7' });
     return bg;
   }
 
@@ -827,7 +827,7 @@
   }
 
   // ---------- the plan document floating over the round table ----------
-  const planDocPos = () => [sx(TABLE.x, TABLE.y), sy(TABLE.x, TABLE.y, 66)];
+  const planDocPos = () => [sx(TABLE.x, TABLE.y), sy(TABLE.x, TABLE.y, 84)];   // high enough to clear the head on the back stool
   function planDoc(c, plan, t) {
     const [cx0, cy0] = planDocPos(), bob = Math.round(Math.sin(t * 2.4)), ready = plan.state === 'ready', x = cx0, y = cy0 + bob;
     const ts = A(TABLE.x, TABLE.y, TABLE.h);                       // shadow on the table top
@@ -890,7 +890,7 @@
     }
     // steam over the coffee machine
     for (let i = 0; i < 3; i++) {
-      const p = (t * 8 + i * 4) % 12, bx = sx(9.4, 0.5), by = sy(9.4, 0.5, 32);
+      const p = (t * 8 + i * 4) % 12, bx = sx(10.4, 0.5), by = sy(10.4, 0.5, 32);
       lc.globalAlpha = 0.6 * (1 - p / 12); R(lc, bx + Math.sin(t * 2 + i * 2) * 1.5 - 1 + i * 2, by - p, 2, 2, '#fff');
     }
     lc.globalAlpha = 1;
@@ -1007,7 +1007,7 @@
     W, H, SLOTS, MAX_SLOTS, render, hitTest, walkPath, SPOTS, SPEED, STEP: 1,
     drawAvatar: F.drawAvatar, GX, GY, isBlocked, project: (x, y, z) => [sx(x, y), sy(x, y, z || 0)],
     deskPoint: (slot) => { const s = SLOTS[slot]; return [sx(s.desk.x, s.desk.y), sy(s.desk.x, s.desk.y, DESKZ)]; },
-    TABLE, SEATS, MGR, MD, tablePoint: () => [sx(TABLE.x, TABLE.y), sy(TABLE.x, TABLE.y, TABLE.h)],
+    TABLE, SEATS, MGR, MD, COUNTER, PLANTS, tablePoint: () => [sx(TABLE.x, TABLE.y), sy(TABLE.x, TABLE.y, TABLE.h)],
     labelPoint: labelPt,
     deskRoute, kindCol, roleCol, roleBadge, ROLE_COL, walkBetween,
     drawOrder: (entries) => sortObjs(buildObjects(entries, 0, null)).map((o) => o.tag || 'other'),   // for tests

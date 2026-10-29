@@ -6,11 +6,11 @@
 (function () {
   'use strict';
   const W = 384, H = 240;
-  const COLS = [48, 125, 202, 279];
+  const COLS = [60, 150, 240];
   const ROWS = [94, 178];
   const SLOTS = [];
-  for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) SLOTS.push({ cx: COLS[c], cy: ROWS[r], row: r, col: c });
-  SLOTS.push({ cx: 350, cy: 178, row: 1, col: 4, mgr: true });   // slot 8: the manager desk (main agent), bottom-right corner
+  for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) SLOTS.push({ cx: COLS[c], cy: ROWS[r], row: r, col: c });
+  SLOTS.push({ cx: 350, cy: 178, row: 1, col: 3, mgr: true });   // slot 6: the manager desk (main agent), bottom-right corner
   const AISLE = [132, 214];
   const COFFEE = { x: 350, y: 100 };
   const MAX_SLOTS = SLOTS.length;
@@ -495,7 +495,7 @@
     drawHead(c, 10, 8, look, { mood: 'happy' });
   }
 
-  window.OfficeFlat = { W, H, SLOTS, MAX_SLOTS, MGR: 8, render, hitTest, walkPath, SPOTS, drawAvatar, COFFEE, AISLE,
+  window.OfficeFlat = { W, H, SLOTS, MAX_SLOTS, MGR: SLOTS.length - 1, render, hitTest, walkPath, SPOTS, drawAvatar, COFFEE, AISLE,
     SPEED: 40, STEP: 0.5, // walking speed in world units/s (px here) and canvas scale step
     // helpers re-used by the isometric renderer
     shared: { R, shade, rnd, disc, line, bmp, stateIcon, drawTalk, pillText, measurePill, drawBubble, TYPE_BADGE, STATE_COL, dashedRect } };
