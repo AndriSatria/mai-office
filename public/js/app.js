@@ -234,7 +234,7 @@
     send({ type: 'send', id: selectedId, text: '/team ' + task }); $('input').value = '';
   });
   // ---------- permission mode line (Shift+Tab cycles, like the Claude Code CLI) ----------
-  const MODE_TEXT = { default: 'default mode', acceptEdits: '▸▸ accept edits on', plan: '‖ plan mode on', bypassPermissions: '▸▸ bypass permissions on' };
+  const MODE_TEXT = { default: 'default mode', acceptEdits: '▸▸ accept edits on', plan: '‖ plan mode on', bypassPermissions: '▸▸ bypass permissions on', force: '▸▸ run everything on', ask: '? ask mode on' };
   function cycleMode() {
     const a = agents.get(selectedId); if (!a) return;
     const modes = a.modes || ['default'];
@@ -359,8 +359,13 @@
     if (confirm(`Fire ${a.name}? Their desk and transcript will be removed.`)) send({ type: 'fire', id: a.id });
   });
 
-  // ---------- local Claude Code sessions ----------
-  let sessState = { loading: true };
+  // ---------- local Claude Code sessions and Cursor CLI chats ----------
+  let sessState = { loading: true }, sessSrc = 'claude';
+  const SESS_TEXT = {
+    claude: { note: '', empty: 'No sessions found. Run claude in a project first, or point CLAUDE_CONFIG_DIR at your Claude folder.' },
+    // the IDE keeps its chats in state.vscdb, which `agent --resume` can't open
+    cursor: { note: ' · Cursor CLI chats only: chats from the Cursor editor are stored separately and the CLI can\'t resume them.', empty: 'No Cursor CLI chats found. Run agent in a project first, or point CURSOR_CONFIG_DIR at your Cursor folder.' },
+  };
   const ago = (ms) => {
     const m = Math.round((Date.now() - ms) / 60000);
     if (m < 1) return 'just now'; if (m < 60) return m + ' min ago';
@@ -371,12 +376,12 @@
   function renderSessions() {
     const list = $('sessList'), st = sessState, full = agents.size >= Office.MAX_SLOTS;
     list.textContent = '';
-    $('sessDir').textContent = st.dir ? 'Read-only from ' + st.dir + '/projects' : '';
+    $('sessDir').textContent = (st.dir ? 'Read-only from ' + st.dir : '') + SESS_TEXT[sessSrc].note;
     $('sessFull').hidden = !full;
     $('sessFull').textContent = `The office is full (${Office.MAX_SLOTS} of ${Office.MAX_SLOTS} desks). Fire someone to resume a session here.`;
     if (st.loading) { list.appendChild(el('p', 'sessMsg', 'Reading your sessions…')); return; }
     if (st.error) { list.appendChild(el('p', 'sessMsg', 'Could not read the sessions: ' + st.error)); return; }
-    if (!st.sessions.length) { list.appendChild(el('p', 'sessMsg', 'No sessions found. Run claude in a project first, or point CLAUDE_CONFIG_DIR at your Claude folder.')); return; }
+    if (!st.sessions.length) { list.appendChild(el('p', 'sessMsg', SESS_TEXT[sessSrc].empty)); return; }
     const open = new Map([...agents.values()].filter((a) => a.sessionId).map((a) => [a.sessionId, a]));
     const groups = new Map();
     for (const s of st.sessions) { if (!groups.has(s.cwd)) groups.set(s.cwd, []); groups.get(s.cwd).push(s); }
@@ -387,25 +392,45 @@
       for (const s of ss) {
         const li = el('li', 'sessRow'), main = el('div', 'sessMain');
         const name = el('div', 'sessName', s.title); name.title = s.title;
-        main.append(name, el('div', 'sessMeta dim', `${ago(s.mtime)} · ${s.count} message${s.count === 1 ? '' : 's'} · ${s.id.slice(0, 8)}`));
+        const count = s.hasTranscript === false ? 'no local transcript' : `${s.count} message${s.count === 1 ? '' : 's'}`;
+        main.append(name, el('div', 'sessMeta dim', `${ago(s.mtime)} · ${count} · ${s.id.slice(0, 8)}`));
         const who = open.get(s.id), b = el('button', 'btn small' + (who ? '' : ' green'), who ? 'Open ' + who.name : 'Resume in office');
         b.type = 'button';
         b.setAttribute('aria-label', (who ? 'Open ' + who.name + ' for ' : 'Resume in office: ') + s.title);
         if (who) b.addEventListener('click', () => { $('sessDlg').close(); select(who.id); });
-        else { b.disabled = full; b.addEventListener('click', () => { send({ type: 'resume', sessionId: s.id }); pendingSelect = true; $('sessDlg').close(); }); }
+        else { b.disabled = full; b.addEventListener('click', () => { send({ type: 'resume', sessionId: s.id, source: sessSrc }); pendingSelect = true; $('sessDlg').close(); }); }
         li.append(main, b); ul.appendChild(li);
       }
       g.appendChild(ul); list.appendChild(g);
     }
   }
   async function loadSessions() {
-    sessState = { loading: true, dir: sessState.dir }; renderSessions();
+    const src = sessSrc;
+    sessState = { loading: true }; renderSessions();
+    let next;
     try {
-      const r = await fetch('/api/claude/sessions'), j = await r.json();
+      const r = await fetch(`/api/${src}/sessions`), j = await r.json();
       if (!r.ok) throw new Error(j.error || r.statusText);
-      sessState = j;
-    } catch (e) { sessState = { error: e.message, dir: sessState.dir }; }
-    renderSessions();
+      next = j;
+    } catch (e) { next = { error: e.message }; }
+    if (src !== sessSrc) return;   // the user switched tabs while this was loading
+    sessState = next; renderSessions();
+  }
+  const sessTabs = [...document.querySelectorAll('.sessTab')];
+  function pickSessTab(src, focus) {
+    sessSrc = src;
+    for (const t of sessTabs) { const on = t.dataset.src === src; t.setAttribute('aria-selected', String(on)); t.tabIndex = on ? 0 : -1; if (on && focus) t.focus(); }
+    $('sessList').setAttribute('aria-labelledby', 'sessTab-' + src);
+    loadSessions();
+  }
+  for (const t of sessTabs) {
+    t.addEventListener('click', () => pickSessTab(t.dataset.src));
+    t.addEventListener('keydown', (e) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault();
+      const i = sessTabs.indexOf(t), n = sessTabs[(i + (e.key === 'ArrowRight' ? 1 : -1) + sessTabs.length) % sessTabs.length];
+      pickSessTab(n.dataset.src, true);
+    });
   }
   $('sessBtn').addEventListener('click', () => { $('sessDlg').showModal(); loadSessions(); });
   $('sessReload').addEventListener('click', loadSessions);

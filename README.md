@@ -147,9 +147,9 @@ HARNESS_MODE=cursor npm start      # Cursor CLI agent (needs `cursor-agent` inst
 All three types can be mixed in one office - pick the type per agent in the **Hire agent** dialog
 (types whose CLI isn't found are flagged "CLI not found"). The type is persisted with the agent.
 
-### Resume your local Claude Code sessions
+### Resume your local Claude Code sessions and Cursor CLI chats
 
-The office can read the Claude Code sessions on your own PC and continue one at a desk.
+The office can read the Claude Code sessions and Cursor CLI chats on your own PC and continue one at a desk.
 
 ```bash
 git clone https://github.com/AndriSatria/mai-office
@@ -158,15 +158,24 @@ npm install
 npm run start:claude
 ```
 
-Open http://127.0.0.1:3000 and click **Claude sessions**. Sessions are grouped by project folder, newest first. **Resume in office**
+Open http://127.0.0.1:3000 and click **Sessions**, then the **Claude Code** or **Cursor CLI** tab (arrow keys switch tabs). Sessions are grouped by project folder, newest first. **Resume in office**
 puts a Claude Code agent at a free desk with the recent history in its chat; your next message runs
 `claude -p ... --resume <session id>` in that project folder, so Claude picks up where you left off.
 
 * Sessions are read from `~/.claude/projects/*/*.jsonl` (or `$CLAUDE_CONFIG_DIR/projects`). The folder is only read, never written.
+* Cursor CLI chats: each chat's `meta.json` (title, folder, times) is read from `~/.cursor/chats/<md5 of folder>/<chat id>/`
+  (or `$CURSOR_CONFIG_DIR/chats`, `$XDG_CONFIG_HOME/cursor/chats`), the history from
+  `~/.cursor/projects/<folder slug>/agent-transcripts/<chat id>/<chat id>.jsonl` (or `$CURSOR_DATA_DIR`). **Resume in office** puts a Cursor
+  agent at a free desk; your next message runs `agent -p ... --resume <chat id>` in the chat's folder (the CLI only finds a chat from
+  the folder it was started in). `store.db` (SQLite) is never opened, so no extra dependency.
+* Not listed: Cursor **editor** chats (they live in the editor's `state.vscdb`; `agent --resume` can't open them, the dialog says so),
+  chats without `meta.json` or a `cwd` in it (older CLI builds; the folder can't be recovered from the md5 name), subagent chats,
+  never-used chats, and chats whose folder name doesn't match `md5(cwd)`. A chat with no transcript file is listed as "no local transcript".
 * If the office is full (7 people), fire someone first.
 * The list is only served to `localhost` / `127.0.0.1` pages. Do not bind `HOST` to a public address on a machine with sessions you care about.
 
 ![Claude sessions browser](screenshots/hd/13-claude-sessions-browser-hd.png)
+![Cursor CLI chats in the sessions browser](screenshots/hd/16-cursor-sessions-browser-hd.png)
 
 ### Slash commands and permission modes
 
@@ -181,20 +190,34 @@ The list is read (never written) from:
 | project | `<agent folder>/.claude/commands/**/*.md`, `<agent folder>/.claude/skills/*/SKILL.md` | `project` |
 | plugins | `~/.claude/plugins/installed_plugins.json` install paths: `commands/*.md`, `skills/*/SKILL.md`, as `/plugin:name` | `plugin` |
 | Claude Code itself | `slash_commands` + `skills` from the last run's init event, minus interactive-only ones (`/clear`, `/model`, …) | `session` |
-| Cursor agents | `<agent folder>/.cursor/commands/*.md`, `~/.cursor/commands/*.md` | `project` / `user` |
+| Cursor agents | the folders `cursor-agent` loads: `~/.cursor/commands/*.md`, `~/.claude/commands/*.md`, `<agent folder>/.cursor/commands/*.md`, `<agent folder>/.claude/commands/*.md` (flat, no sub folders), skills in `<agent folder>/.cursor/skills`, `<agent folder>/.claude/skills`, `~/.cursor/skills`, `~/.claude/skills` | `project` / `user` |
 | the office | `/plan <task>` (one plan-mode run), mock agents also get `/team` | `office` / `demo` |
 
 The description is the frontmatter `description:` or the first line of the file; `argument-hint:` is shown next to
-the name. Built-in CLI commands are only listed once Claude Code reports them in its init event, since which ones work
+the name. For Cursor, the CLI's own commands (`/model`, `/resume`, `/plan`, …) are interactive-only and its init event
+has no command list, so they are not offered. The Cursor folders come from the CLI bundle's loader; that `-p` runs expand a
+`/name` prompt is read from the bundle, not run against a logged-in CLI (`shortcut` in `lib/slash-commands.js`). Built-in CLI commands are only listed once Claude Code reports them in its init event, since which ones work
 with `-p` depends on the version. The list is served at `GET /api/agents/:id/commands`, to `localhost` pages only.
 
 Under the box a line shows the agent's permission mode, like the CLI: `▸▸ accept edits on (shift+tab to cycle)`.
 Shift+Tab in the box (or a click on the line) cycles `default → acceptEdits → plan → default`; `bypassPermissions`
 joins the cycle only with `HARNESS_ALLOW_BYPASS=1`. The mode is saved per agent and passed as `--permission-mode` on
-the next run. Plan mode still gathers the team at the round table. Cursor agents only have `default` and `plan`.
+the next run. Plan mode still gathers the team at the round table.
+
+Cursor agents cycle `default → plan → ask → default`, mapped to the print-mode flags in `agent --help`:
+
+| Mode | Flag | Effect (Cursor docs) |
+| --- | --- | --- |
+| `default` | none | edits are only proposed, not applied ([headless docs](https://cursor.com/docs/cli/headless)) |
+| `force` | `--force` | applies edits and runs commands; joins the cycle only with `HARNESS_ALLOW_BYPASS=1` |
+| `plan` | `--mode plan` | read-only planning; the team gathers at the round table |
+| `ask` | `--mode ask` | read-only questions and answers |
+
+`--auto-review` is not offered: it asks before some tool calls, and a headless run can't answer.
 
 ![Slash command popup](screenshots/hd/14-slash-commands-popup-hd.png)
 ![Permission mode line: accept edits, then plan](screenshots/hd/15-permission-mode-line-hd.png)
+![Cursor mode line: default, plan, ask](screenshots/hd/17-cursor-mode-line-hd.png)
 
 ### Using it
 
@@ -277,7 +300,7 @@ Environment knobs:
 Per message, with cwd = the agent's working directory (from the [Cursor CLI docs](https://cursor.com/docs/cli/reference/output-format)):
 
 ```
-cursor-agent -p --output-format stream-json --trust [--stream-partial-output] [--resume <chatId>] -- "<your message>"
+cursor-agent -p --output-format stream-json [--stream-partial-output] [--mode plan|ask | --force] --trust [--resume <chatId>] -- "<your message>"
 ```
 
 The binary is looked up as `cursor-agent`, then `agent` (newer installs), or `HARNESS_CURSOR_BIN`. Event mapping:
@@ -289,8 +312,8 @@ The binary is looked up as `cursor-agent`, then `agent` (newer installs), or `HA
 
 `HARNESS_CURSOR_ARGS` adds extra args (`--model …`, `--force` to let it run shell commands without prompting - dangerous).
 
-> ⚠️ **Cursor mode is untested against a real `cursor-agent`** (not installed here); it follows the documented flags and event
-> shapes. It is covered by `npm run test:adapters`, which drives claude/cursor/mock agents through the real server using
+> ⚠️ **Cursor mode is not run against a logged-in `cursor-agent`**: the flags were checked with `agent --help` (2026.10.22) and the chat
+> layout read from its bundle, but no real chat was sent (no login here). The plan-ready detection is a guess. It is covered by `npm run test:adapters`, which drives claude/cursor/mock agents through the real server using
 > `scripts/fake-claude.js` and `scripts/fake-cursor-agent.js` (also usable as `HARNESS_CURSOR_BIN` for manual demos).
 
 ## Security notes
@@ -306,6 +329,8 @@ lib/harness.js            agent registry, state machine, persistence, message qu
 lib/roles.js              role derivation from Task input + file-overlap / mention inference helpers
 lib/adapters/claude.js    Claude Code CLI adapter (stream-json)
 lib/adapters/cursor.js    Cursor CLI agent adapter (stream-json)
+lib/claude-sessions.js    read-only Claude Code session reader
+lib/cursor-sessions.js    read-only Cursor CLI chat reader (meta.json + transcript JSONL)
 lib/adapters/mock.js      simulated agent
 lib/adapters/index.js     adapter registry, per-type availability, default type
 public/index.html, style.css
@@ -320,7 +345,7 @@ scripts/demo-video.js     records demo/mai-office-demo.mp4 and demo/mai-office-d
 scripts/test-adapters.js  end-to-end test of all agent types + type persistence (`npm run test:adapters`)
 ```
 
-WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`, `relay {from,to,text}`, `promote {id}`, `permission {id,mode:'default'|'plan'}`; `hire` also takes `permissionMode` and `slot`;
+WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`, `relay {from,to,text}`, `promote {id}`, `permission {id,mode}`, `resume {sessionId,source:'claude'|'cursor'}`; `hire` also takes `permissionMode` and `slot`;
 server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `subagent`, `team`, `relay`, `error`.
 
 ## Regenerate screenshots
@@ -341,7 +366,7 @@ scale (×7 at DPR 2), so nothing is resampled; the script asserts this before ca
 ## Known limitations / ideas
 
 * Max 7 agents (6 desks + the manager desk); fixed office layout; the isometric camera is fixed (no rotation/zoom); bubbles of different agents can overlap.
-* Claude and Cursor modes are untested with the real CLIs; plan-mode detection (`permissionMode: plan` in init, `ExitPlanMode` tool use) is only exercised through `scripts/fake-claude.js`, and the Cursor `--mode plan` flag is a guess; no tool-permission prompts in headless mode; one process per message.
+* Claude and Cursor modes are untested with the real CLIs; plan-mode detection (`permissionMode: plan` in init, `ExitPlanMode` tool use) is only exercised through `scripts/fake-claude.js`, Cursor flags are from `agent --help` but not run logged in; no tool-permission prompts in headless mode; one process per message.
 * No auth; no markdown rendering in chat; long transcripts are capped at 300 messages per agent.
 * Next: `/clear`/new-session button, per-agent model & permission settings,
   markdown/diff rendering, sound, day/night cycle.

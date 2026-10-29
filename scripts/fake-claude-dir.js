@@ -7,6 +7,42 @@ const path = require('path');
 const enc = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, '-');
 const line = (o) => JSON.stringify(o);
 
+const md5 = (s) => require('crypto').createHash('md5').update(path.resolve(s)).digest('hex');
+const slug = (cwd) => cwd.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+
+/** Cursor CLI chats: chats/<md5(cwd)>/<id>/meta.json + projects/<slug>/agent-transcripts/<id>/<id>.jsonl, plus broken ones */
+function makeFakeCursorChats(cdir, cwds) {
+  const ids = { cart: '5a1b2c3d-1111-4aaa-8bbb-000000000001', theme: '5a1b2c3d-2222-4aaa-8bbb-000000000002', empty: '5a1b2c3d-3333-4aaa-8bbb-000000000003' };
+  const now = Date.now(), h = 3600e3;
+  const u = (q) => line({ role: 'user', message: { content: [{ type: 'text', text: `<user_info>OS: linux</user_info>\n<user_query>\n${q}\n</user_query>` }] } });
+  const a = (...content) => line({ role: 'assistant', message: { content } });
+  const meta = (cwd, id, m) => [path.join(cdir, 'chats', md5(cwd), id, 'meta.json'), JSON.stringify({ schemaVersion: 1, hasConversation: true, cwd, ...m })];
+  const tr = (cwd, rel) => path.join(cdir, 'projects', slug(cwd), 'agent-transcripts', rel);
+  const files = [
+    meta(cwds.shop, ids.cart, { title: 'Fix rounding in cart totals', createdAtMs: now - 2 * h, updatedAtMs: now - 0.5 * h }),
+    [tr(cwds.shop, `${ids.cart}/${ids.cart}.jsonl`), [
+      u('Cart totals are off by a cent for some coupons. Fix it.'),
+      a({ type: 'text', text: 'I will read the totals helper first.' }, { type: 'tool_use', name: 'Read', input: { path: 'src/cart/totals.js' } }),
+      '{"role":"assistant", broken line',
+      a({ type: 'text', text: 'Totals now use integer cents; added a test for the 15% coupon.' }),
+      line({ type: 'turn_ended', reason: 'completed' }),
+    ].join('\n')],
+    // the placeholder title is replaced by the first question; legacy flat transcript path
+    meta(cwds.blog, ids.theme, { title: 'New Agent', createdAtMs: now - 5 * h }),
+    [tr(cwds.blog, `${ids.theme}.jsonl`), [u('Add a dark theme toggle to the header.'), a({ type: 'text', text: 'Added a toggle that stores the choice in localStorage.' })].join('\n')],
+    // listed without history: meta.json but no transcript on disk
+    meta(cwds.shop, ids.empty, { title: 'Draft the 2.0 migration guide', createdAtMs: now - 8 * h }),
+    // not listed: broken meta.json, no meta.json, a subagent, no conversation, a folder that doesn't match md5(cwd)
+    [path.join(cdir, 'chats', md5(cwds.shop), '5a1b2c3d-4444-4aaa-8bbb-000000000004', 'meta.json'), '{"cwd": "/broken'],
+    [path.join(cdir, 'chats', md5(cwds.shop), '5a1b2c3d-5555-4aaa-8bbb-000000000005', 'store.db'), 'not opened'],
+    meta(cwds.shop, '5a1b2c3d-6666-4aaa-8bbb-000000000006', { title: 'subagent', isSubagent: true, createdAtMs: now }),
+    meta(cwds.blog, '5a1b2c3d-7777-4aaa-8bbb-000000000007', { title: 'never used', hasConversation: false, createdAtMs: now }),
+    [path.join(cdir, 'chats', md5(cwds.blog), '5a1b2c3d-8888-4aaa-8bbb-000000000008', 'meta.json'), JSON.stringify({ schemaVersion: 1, hasConversation: true, cwd: cwds.shop, title: 'moved folder', createdAtMs: now })],
+  ];
+  for (const [f, text] of files) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text + '\n'); }
+  return ids;
+}
+
 function makeFakeClaudeDir() {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'mai-office-fake-claude-'));
   const dir = path.join(base, 'claude'), work = path.join(base, 'work');
@@ -67,9 +103,12 @@ function makeFakeClaudeDir() {
     [path.join(cwds.shop, '.claude', 'skills', 'seed-data', 'SKILL.md')]: '---\ndescription: Fill the dev database with sample orders\n---\n',
     [path.join(cwds.shop, '.cursor', 'commands', 'lint.md')]: 'Run the linter and fix what it finds\n',
     [path.join(cursorDir, 'commands', 'explain.md')]: '# Explain the selected code\n',
+    [path.join(cwds.shop, '.cursor', 'skills', 'api-docs', 'SKILL.md')]: '---\nname: api-docs\ndescription: Regenerate the OpenAPI docs\n---\n',
+    [path.join(cursorDir, 'skills', 'tidy-imports', 'SKILL.md')]: '---\ndescription: Sort and dedupe imports\n---\n',
   };
   for (const [f, text] of Object.entries(md)) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, text); }
-  return { base, dir, cwds, ids, cursorDir };
+  const cursorIds = makeFakeCursorChats(cursorDir, cwds);
+  return { base, dir, cwds, ids, cursorDir, cursorIds };
 }
 
 module.exports = { makeFakeClaudeDir };

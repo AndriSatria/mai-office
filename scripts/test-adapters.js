@@ -283,12 +283,12 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   // ---------- local Claude Code sessions: list, history, resume with --resume in the session cwd ----------
   {
     const fake = makeFakeClaudeDir();
-    const filesBefore = () => { const out = {}; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out[p] = fs.readFileSync(p, 'utf8'); } }; walk(fake.dir); return JSON.stringify(out); };
+    const filesBefore = () => { const out = {}; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else out[p] = fs.readFileSync(p, 'utf8'); } }; walk(fake.dir); walk(fake.cursorDir); return JSON.stringify(out); };
     const before = filesBefore();
     srv = startServer({ HARNESS_MODE: 'mock', HARNESS_DATA: DATA + '.sess', HARNESS_CLAUDE_DIR: fake.dir, HARNESS_CURSOR_DIR: fake.cursorDir }); await sleep(1000);
     const res = await fetch(`http://127.0.0.1:${PORT}/api/claude/sessions`), body = await res.json();
     const list = body.sessions || [];
-    assert(res.ok && body.dir === fake.dir && list.map((x) => x.id).join() === [fake.ids.rate, fake.ids.tests, fake.ids.blog].join(), 'sessions endpoint lists the 3 real sessions newest first (sidechain + summary-only files skipped)');
+    assert(res.ok && body.dir === fake.dir + '/projects' && list.map((x) => x.id).join() === [fake.ids.rate, fake.ids.tests, fake.ids.blog].join(), 'sessions endpoint lists the 3 real sessions newest first (sidechain + summary-only files skipped)');
     const rate = list.find((x) => x.id === fake.ids.rate), tests = list.find((x) => x.id === fake.ids.tests);
     assert(rate.title === 'Add rate limiting to the checkout API' && rate.cwd === fake.cwds.shop && rate.count === 3, `summary line is the title, cwd comes from the lines, the malformed line is skipped (count ${rate.count})`);
     assert(tests.title === 'Why is the orders test flaky on CI?' && tests.count === 2, 'no summary: the first real user message is the title (meta + /command lines ignored)');
@@ -341,7 +341,47 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
     ws.send(JSON.stringify({ type: 'hire', name: 'CurCmd', cwd: fake.cwds.shop, agentType: 'cursor' }));
     const cc = (await waitFor(() => log.slice(mk0).find((m) => m.type === 'agent' && m.isNew && m.agent.name === 'CurCmd'))).agent;
     const cn = (await cmds(cc.id)).map((c) => c.source + ':' + c.name);
-    assert(cn.includes('project:lint') && cn.includes('user:explain') && cc.modes.join() === 'default,plan' && cc.permissionMode === 'default', 'cursor: .cursor/commands (project + user) listed, only default/plan modes: ' + cn.join());
+    assert(['project:lint', 'user:explain', 'project:api-docs', 'user:tidy-imports', 'user:review-pr', 'project:seed-data', 'app:plan'].every((x) => cn.includes(x)) && !cn.some((x) => /db:migrate|frontend:component|deploy-kit|compact/.test(x)),
+      'cursor: .cursor + .claude commands (flat) and skills, project + user; no sub folders, plugins or session names: ' + cn.join());
+    assert(cc.modes.join() === 'default,plan,ask' && cc.permissionMode === 'default', 'cursor modes: default, plan, ask (force needs HARNESS_ALLOW_BYPASS=1): ' + cc.modes.join());
+    const curReply = async (text, from) => { ws.send(JSON.stringify({ type: 'send', id: cc.id, text })); const r = await waitFor(() => log.slice(from).find((m) => (m.type === 'msg' && m.id === cc.id && m.msg.role === 'assistant' && /fake cursor-agent/.test(m.msg.text)) || (m.type === 'msg_update' && m.id === cc.id && /fake cursor-agent/.test(m.text))), 15000); await waitFor(() => latestA(cc.id).state === 'done', 15000); return r.msg ? r.msg.text : r.text; };
+    assert((await curReply('look around', log.length)).includes('default: edits proposed only'), 'cursor default mode passes neither --mode nor --force');
+    ws.send(JSON.stringify({ type: 'permission', id: cc.id, mode: 'force' }));
+    await sleep(200);
+    assert(latestA(cc.id).permissionMode === 'default', 'cursor force (--force) is refused without HARNESS_ALLOW_BYPASS=1');
+    for (const mode of ['ask', 'plan']) {
+      ws.send(JSON.stringify({ type: 'permission', id: cc.id, mode }));
+      await waitFor(() => latestA(cc.id).permissionMode === mode);
+      const from = log.length, t = await curReply('next ' + mode, from);
+      assert(t.includes('mode ' + mode), `cursor ${mode} mode -> --mode ${mode}: ` + t.slice(0, 90));
+      if (mode === 'plan') assert(log.slice(from).some((m) => m.type === 'agent' && m.agent.id === cc.id && m.agent.plan), 'cursor plan mode still starts the round-table gathering');
+    }
+
+    // Cursor CLI chats: meta.json + transcript, broken entries skipped, resume with agent --resume in the chat's folder
+    const cres = await fetch(`http://127.0.0.1:${PORT}/api/cursor/sessions`), cbody = await cres.json(), cl2 = cbody.sessions || [];
+    assert(cres.ok && cbody.dir === fake.cursorDir + '/chats' && cl2.map((x) => x.id).join() === [fake.cursorIds.cart, fake.cursorIds.theme, fake.cursorIds.empty].join(),
+      'cursor sessions: 3 chats newest first; broken meta, missing meta, subagent, unused and moved-folder chats skipped: ' + cl2.map((x) => x.title).join(' | '));
+    const [cart, theme, empty] = cl2;
+    assert(cart.title === 'Fix rounding in cart totals' && cart.cwd === fake.cwds.shop && cart.count === 3, 'cursor: meta.json title + cwd, malformed transcript line skipped (count ' + cart.count + ')');
+    assert(theme.title === 'Add a dark theme toggle to the header.' && theme.count === 2, 'cursor: placeholder "New Agent" title -> first question; legacy flat transcript path read');
+    assert(empty.hasTranscript === false && empty.count === 0, 'cursor: a chat without a transcript is listed with no history');
+    const cbad = await new Promise((resolve) => require('http').get({ host: '127.0.0.1', port: PORT, path: '/api/cursor/sessions', headers: { host: 'evil.example:' + PORT } }, (r) => { r.resume(); resolve(r.statusCode); }));
+    assert(cbad === 403, 'cursor sessions endpoint refuses a non-loopback Host header');
+    mk0 = log.length;
+    ws.send(JSON.stringify({ type: 'resume', sessionId: fake.cursorIds.cart, source: 'cursor' }));
+    const cra = await waitFor(() => log.slice(mk0).find((m) => m.type === 'agent' && m.isNew));
+    const ctx = cra.transcript.map((m) => m.role + ':' + m.text);
+    assert(cra.agent.type === 'cursor' && cra.agent.cwd === fake.cwds.shop && cra.agent.sessionId === fake.cursorIds.cart, 'cursor resume: a cursor agent with the chat id and cwd');
+    assert(ctx.includes('user:Cart totals are off by a cent for some coupons. Fix it.') && ctx.includes('tool:Read: src/cart/totals.js') && !ctx.some((t) => /user_info|broken/.test(t)), 'cursor resume: history shown, <user_query> unwrapped, context tags dropped');
+    ws.send(JSON.stringify({ type: 'send', id: cra.agent.id, text: 'carry on' }));
+    const crr = await waitFor(() => log.find((m) => (m.type === 'msg' && m.id === cra.agent.id && m.msg.role === 'assistant' && /fake cursor-agent/.test(m.msg.text)) || (m.type === 'msg_update' && m.id === cra.agent.id && /fake cursor-agent/.test(m.text))), 15000);
+    const crt = crr.msg ? crr.msg.text : crr.text;
+    assert(crt.includes(`resumed ${fake.cursorIds.cart}`) && crt.includes(`cwd ${fake.cwds.shop}`), 'next message runs agent --resume <id> in the chat folder (the fake looks it up under md5(cwd)): ' + crt.slice(0, 120));
+    ws.send(JSON.stringify({ type: 'resume', sessionId: fake.cursorIds.cart, source: 'cursor' }));
+    await waitFor(() => log.some((m) => m.type === 'error' && /already has this session open/.test(m.message) && /shop-api/.test(m.message)), 5000);
+    assert(true, 'resuming an open Cursor chat again points at its agent');
+    ws.send(JSON.stringify({ type: 'fire', id: cra.agent.id }));
+    await waitFor(() => log.some((m) => m.type === 'removed' && m.id === cra.agent.id), 5000);
     ws.send(JSON.stringify({ type: 'fire', id: cc.id }));
     ws.send(JSON.stringify({ type: 'resume', sessionId: fake.ids.rate }));
     await waitFor(() => log.some((m) => m.type === 'error' && /already has this session open/.test(m.message)), 5000);

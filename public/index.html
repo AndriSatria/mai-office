@@ -12,7 +12,7 @@
     <span id="modeBadge" class="badge">…</span>
     <span id="conn" class="badge off">offline</span>
     <div class="spacer"></div>
-    <button id="sessBtn" class="btn" title="Browse the Claude Code sessions on this computer and resume one at a desk">Claude sessions</button>
+    <button id="sessBtn" class="btn" title="Browse the Claude Code sessions and Cursor CLI chats on this computer and resume one at a desk">Sessions</button>
     <button id="hireBtn" class="btn green">＋ Hire agent</button>
     <button id="fireBtn" class="btn red" disabled>✖ Fire agent</button>
   </header>
@@ -73,13 +73,17 @@
   </dialog>
   <dialog id="sessDlg" aria-labelledby="sessTitle">
     <div class="sessHead">
-      <h3 id="sessTitle">Your Claude Code sessions</h3>
+      <h3 id="sessTitle">Your local sessions</h3>
       <button type="button" id="sessReload" class="btn small">Refresh</button>
       <button type="button" id="sessClose" class="btn small">Close</button>
     </div>
+    <div class="sessTabs" role="tablist" aria-label="Session source">
+      <button type="button" role="tab" id="sessTab-claude" class="sessTab" data-src="claude" aria-controls="sessList" aria-selected="true">Claude Code</button>
+      <button type="button" role="tab" id="sessTab-cursor" class="sessTab" data-src="cursor" aria-controls="sessList" aria-selected="false" tabindex="-1">Cursor CLI</button>
+    </div>
     <p id="sessDir" class="dim"></p>
     <p id="sessFull" class="sessFull" hidden></p>
-    <div id="sessList" aria-live="polite"></div>
+    <div id="sessList" role="tabpanel" aria-labelledby="sessTab-claude" aria-live="polite"></div>
   </dialog>
   <div id="toast" hidden></div>
 

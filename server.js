@@ -6,6 +6,7 @@ const { WebSocketServer } = require('ws');
 const { Harness } = require('./lib/harness');
 const { createRegistry } = require('./lib/adapters');
 const claudeSessions = require('./lib/claude-sessions');
+const cursorSessions = require('./lib/cursor-sessions');
 
 const PORT = Number(process.env.PORT) || 3000;
 // Loopback by default: this server can run commands via Claude Code in arbitrary dirs.
@@ -26,7 +27,14 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, defaultType: registry
 app.get('/api/claude/sessions', (req, res) => {
   if (!hostOk(req)) return res.status(403).json({ error: 'Forbidden host.' });
   try {
-    res.json({ dir: claudeSessions.claudeDir(), sessions: claudeSessions.listSessions().map(claudeSessions.publicInfo) });
+    res.json({ dir: claudeSessions.claudeDir() + '/projects', sessions: claudeSessions.listSessions().map(claudeSessions.publicInfo) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/cursor/sessions', (req, res) => {
+  if (!hostOk(req)) return res.status(403).json({ error: 'Forbidden host.' });
+  try {
+    res.json({ dir: cursorSessions.configDir() + '/chats', sessions: cursorSessions.listSessions().map(({ id, cwd, title, mtime, count, hasTranscript }) => ({ id, cwd, title, mtime, count, hasTranscript })) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -65,7 +73,7 @@ wss.on('connection', (ws) => {
         case 'promote': harness.setMain(m.id); break;
         case 'permission': harness.setPermissionMode(m.id, m.mode); break;
         case 'relay': harness.relay(m.from, m.to, m.text); break;
-        case 'resume': harness.resume(m.sessionId); break;
+        case 'resume': harness.resume(m.sessionId, m.source); break;
         default: break;
       }
     } catch (e) {
