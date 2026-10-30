@@ -126,7 +126,7 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   await sleep(4500 + 1500);   // let released helpers from the earlier tests become free again
   mark = log.length;
   const before = new Set(Object.keys(agentsNow()));
-  ws.send(JSON.stringify({ type: 'send', id: ids.Cla.id, text: '/code-review the auth change' }));
+  ws.send(JSON.stringify({ type: 'send', id: ids.Cla.id, text: '/code-review foreground the auth change' }));
   await waitFor(() => log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'start').length === 4, 20000);
   const cstarts = log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'start');
   assert(cstarts.map((m) => m.sub.role).join() === 'security,performance,tests,style', 'roles derived from subagent_type/description: ' + cstarts.map((m) => m.sub.role).join());
@@ -156,6 +156,40 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   assert(sys.length === 1 && !log.slice(mark).some((m) => m.type === 'msg' && m.id === hids[1] && m.msg.role === 'sub'), "helper's own transcript only gets a 'helped Cla: …' system line (no sub lines)");
   assert(hids.every((id) => lastAgent(id).helping === null), 'helpers are released afterwards (helping=null)');
   assert(log.slice(mark).filter((m) => m.type === 'team' && m.reset).length >= 1, 'team feed resets per run');
+
+  // ---------- background subagents (current Claude Code /code-review): helpers stay out until their real completion ----------
+  await sleep(4500 + 1500);
+  mark = log.length;
+  ws.send(JSON.stringify({ type: 'send', id: ids.Cla.id, text: '/code-review the auth change' }));
+  await waitFor(() => log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'start').length === 4, 20000);
+  const bstarts = log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'start');
+  const bh = bstarts.map((m) => m.sub.helperId);
+  assert(bh.every(Boolean) && new Set(bh).size === 4 && !bh.includes(ids.Cla.id), 'background: 4 Agent calls give 4 different helpers (not the lead)');
+  await sleep(1500);   // past the "Async agent launched" tool_results and the first `result`
+  const bm = log.slice(mark);
+  assert(!bm.some((m) => m.type === 'subagent' && m.op === 'end'), 'background: the immediate "Async agent launched" results do not end any helper');
+  assert(bh.every((id) => lastAgent(id).helping && lastAgent(id).helping.parentName === 'Cla'), 'background: all 4 helpers are still helping after the first result');
+  assert(lastAgent(ids.Cla.id).state === 'working' && /waiting for 4 background agents/.test(lastAgent(ids.Cla.id).toolSummary || ''), 'background: the lead stays working ("waiting for 4 background agents"): ' + lastAgent(ids.Cla.id).toolSummary);
+  assert(bm.some((m) => m.type === 'subagent' && m.op === 'activity' && m.sub.tool === 'Read' && /src\/auth\.js/.test(m.sub.summary)), 'background: task_progress shows up as helper activity');
+  await waitFor(() => log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'end').length === 4, 20000);
+  const bends = log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'end');
+  assert(bends.map((m) => m.sub.subId).join() === 'toolu_style,toolu_perf,toolu_test,toolu_sec', 'background: helpers end in the order of their task_notification events: ' + bends.map((m) => m.sub.subId).join());
+  assert(bends.find((m) => m.sub.subId === 'toolu_style').sub.ok === false && bends.filter((m) => m.sub.ok).length === 3, 'background: a failed task_notification marks only that helper failed');
+  await waitFor(() => log.slice(mark).some((m) => m.type === 'agent' && m.agent.id === ids.Cla.id && m.agent.state === 'done'), 20000);
+  const bteam = log.slice(mark).filter((m) => m.type === 'team' && m.id === ids.Cla.id && m.entry).map((m) => m.entry);
+  assert(bteam.some((e) => e.kind === 'handoff' && e.from.role === 'security' && e.short === 'found 3 issues'), 'background: the "<task-notification>" message carries the result text into the handoff');
+  assert(bteam.at(-1).kind === 'huddle' && /4 reports in, 1 failed/.test(bteam.at(-1).text), 'background: wrap-up after all 4 reported');
+  assert(bh.every((id) => lastAgent(id).helping === null), 'background: helpers go back to their own work afterwards');
+  assert(/background code-review/.test(log.slice(mark).filter((m) => m.type === 'msg' && m.id === ids.Cla.id && m.msg.role === 'assistant').map((m) => m.msg.text).join(' ')), 'background: the follow-up turn text reaches the lead chat');
+
+  // older -p builds exit after the first result: pending helpers end as failed, the run still finishes
+  await sleep(4500 + 1500);
+  mark = log.length;
+  ws.send(JSON.stringify({ type: 'send', id: ids.Cla.id, text: '/code-review exit-early' }));
+  await waitFor(() => log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'end').length === 4, 20000);
+  assert(log.slice(mark).filter((m) => m.type === 'subagent' && m.op === 'end').every((m) => !m.sub.ok), 'exit-early: helpers still out when the CLI exits end as failed');
+  await waitFor(() => log.slice(mark).some((m) => m.type === 'agent' && m.agent.id === ids.Cla.id && m.agent.state === 'done'), 10000);
+  assert(true, 'exit-early: the run ends normally');
 
   // agent-to-agent message
   mark = log.length;

@@ -23,7 +23,7 @@ const FAKE = makeFakeClaudeDir();   // sessions browser shot: sample sessions on
 
 (async () => {
   const srv = spawn(process.execPath, ['server.js'], { cwd: ROOT, stdio: 'ignore', env: { ...process.env, PORT, HARNESS_MODE: 'mock', HARNESS_DATA: DATA, HARNESS_DEFAULT_CWD: ROOT,
-    HARNESS_CLAUDE_DIR: FAKE.dir, HARNESS_CURSOR_DIR: FAKE.cursorDir, HARNESS_CLAUDE_BIN: path.join(__dirname, 'fake-claude.js'), HARNESS_CURSOR_BIN: path.join(__dirname, 'fake-cursor-agent.js') } });
+    HARNESS_CLAUDE_DIR: FAKE.dir, HARNESS_CURSOR_DIR: FAKE.cursorDir, HARNESS_CLAUDE_BIN: path.join(__dirname, 'fake-claude.js'), HARNESS_CURSOR_BIN: path.join(__dirname, 'fake-cursor-agent.js'), FAKE_CLAUDE_BG_MS: '2500' } });
   await sleep(1200);
   const browser = await chromium.launch();
   const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 2 });
@@ -100,6 +100,16 @@ const FAKE = makeFakeClaudeDir();   // sessions browser shot: sample sessions on
     await idle();
     await teamShots(page, 'Ada', { mid: () => shot('05-team-code-review-4-helpers-hd.png'), peer: () => shot('06-team-peer-conversation-hd.png'),
       handoff: () => shot('08-team-result-handoff-hd.png'), huddle: () => shot('07-team-huddle-hd.png') }, sleep);
+
+    // 18) a Claude agent (fake CLI) running /code-review with 4 BACKGROUND agents: 4 helpers working while the lead waits for them
+    await page.evaluate(() => window.harness.select(null));
+    await idle();
+    await sendTo('Grace', '/code-review');
+    await page.waitForFunction(() => { const H = window.harness, g = [...H.agents.values()].find((a) => a.name === 'Grace');
+      return /waiting for 4 background/.test(g.toolSummary || '') && [...H.agents.values()].filter((a) => { const h = H.help(a.id); return h && h.phase === 'work' && h.seated; }).length >= 4; }, null, { timeout: 30000 });
+    await sleep(600);
+    await shot('18-claude-background-code-review-4-helpers-hd.png');
+    await waitState('Grace', 'done', 40000);
 
     // 9-12) manager desk + round table overview, monitors facing the people (close-up), plan mode gathering, plan ready + summary bubble
     await page.evaluate(() => window.harness.select(null));

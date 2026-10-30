@@ -111,9 +111,14 @@ lead**: every helper does the job **at their own desk**, and the exchange is dra
   feed per lead lists the plan, assignments, peer chats, handoffs, mentions and the wrap-up; inferred entries carry an `inferred` tag with the reason.
 * **Mock mode:** `/code-review` (4 role helpers with overlapping files and different durations, one fails, then a consolidated summary), `/team <task>`
   (3 helpers), a message containing "in parallel"/"subagents" ("fail" makes the last one fail), or the **👥 Team task** button. `scripts/fake-claude.js`
-  emulates a `/code-review` Task fan-out for the real Claude adapter path.
+  emulates the current background `/code-review` (4 `Agent` calls, see below); "foreground" in the prompt gives the older 4-`Task` shape.
 * **Events** (normalized adapter events): `subagent_start {subId,label,kind,hint}`, `subagent_activity`, `subagent_end {subId,ok}`. A `Task`/`Agent`
-  `tool_use` starts a subagent, events with `parent_tool_use_id` are its activity, the matching `tool_result` ends it (`is_error` = failed). Cursor is best
+  `tool_use` starts a subagent, events with `parent_tool_use_id` are its activity, the matching `tool_result` ends it (`is_error` = failed). Background
+  agents (Claude Code runs `Agent` calls in the background by default) answer at once with an `Async agent launched` tool_result
+  (`tool_use_result.status: 'async_launched'`); that does not end the helper. It ends on `system/task_notification` (or `task_updated` with a final
+  `patch.status`, or a `<task-notification>` user message); `system/task_progress` is its activity and `system/task_started` without a tool_use also starts
+  one. A `result` that arrives while background agents are out is held, so the lead stays **working** ("waiting for N background agents") until the next
+  `result` or until the CLI exits (helpers still out then end as failed). Cursor is best
   effort (tool calls named `task`/`subagent`/`agent`). Harness → client: `subagent {op:'start'|'assign'|'activity'|'end',id,sub}` (end carries `ok`, `short`,
   `helperId`), `team {id,entry}` / `team {id,reset}` (entry kinds `plan assign note peer handoff mention huddle`, each with `inferred`, `text`, `why`), and
   `agent` updates carrying `helping {parentId,parentName,subId,label,role,kind}`, `autoHired` and `subs[].role/helperId`. Client→server: `relay {from,to,text}`.
@@ -126,7 +131,8 @@ and still show helpers walking to the lead, so they are **outdated** (not re-rec
 
 **Not verified against real CLIs:** the Claude `Task` / `parent_tool_use_id` handling follows the documented stream-json shape and is only tested with
 `scripts/fake-claude.js`; the Cursor helper shape is a guess; role derivation, the inferred interactions, assignment/auto-hire and relay were exercised with the
-mock and fake CLIs only.
+mock and fake CLIs only. The background-agent shapes come from the Agent SDK type definitions and the CLI bundle, not a captured run; to check
+yours, start with `HARNESS_DEBUG_EVENTS=1`, run `/code-review` on a Claude agent and read the newest file in `data/debug/`.
 
 ## Run
 
@@ -288,6 +294,7 @@ Environment knobs:
 | `HARNESS_PARTIAL` | off | `1` adds `--include-partial-messages` |
 | `HARNESS_DATA` | `data/agents.json` | where agents + transcripts + session ids are persisted |
 | `HARNESS_DEFAULT_CWD` | server cwd | default working dir in the Hire dialog |
+| `HARNESS_DEBUG_EVENTS` | off | `1` writes every raw stream-json line of each Claude/Cursor run to `data/debug/<agent>-<cli>-<UTC time>.jsonl` (gitignored). These files can contain your code, prompts and tool output: delete them when done |
 
 > ⚠️ **Claude mode is untested against a real CLI.** It was written from the documented flags; `claude` was not
 > installed where this prototype was built. It *was* exercised end-to-end (state machine, `--resume` capture,
