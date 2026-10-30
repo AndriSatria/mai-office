@@ -80,6 +80,40 @@ async function codeReviewBg() {
   out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid });
 }
 
+// A normal coding turn with the payloads the chat panel draws: thinking, TodoWrite, Read (numLines), Edit (structuredPatch),
+// Bash with long output, a failing Bash, a markdown answer and result cost/duration/turns. Triggered by "retry" in the prompt.
+async function chatDemo() {
+  const A = (content) => out({ type: 'assistant', session_id: sid, parent_tool_use_id: null, message: { role: 'assistant', content } });
+  const U = (id, content, tool_use_result, is_error) => out({ type: 'user', session_id: sid, parent_tool_use_id: null, tool_use_result, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: !!is_error }] } });
+  const step = Number(process.env.FAKE_CLAUDE_STEP_MS || 150);
+  const todos = (s) => [{ content: 'Read the fetch helper', status: 'completed', activeForm: 'Reading the fetch helper' }, { content: 'Fix the retry backoff', status: s[0], activeForm: 'Fixing the retry backoff' }, { content: 'Add a regression test', status: s[1], activeForm: 'Adding a regression test' }];
+  A([{ type: 'thinking', thinking: 'The retry loop sleeps a fixed 100ms, so three quick failures exhaust it before the server recovers. Exponential backoff should fix it.' }]);
+  await wait(step);
+  A([{ type: 'text', text: "I'll check the fetch helper first." }, { type: 'tool_use', id: 'd_todo', name: 'TodoWrite', input: { todos: todos(['in_progress', 'pending']) } }]);
+  U('d_todo', 'Todos have been modified successfully.', { oldTodos: [], newTodos: todos(['in_progress', 'pending']) });
+  await wait(step);
+  A([{ type: 'tool_use', id: 'd_read', name: 'Read', input: { file_path: process.cwd() + '/src/net/fetch.js' } }]);
+  await wait(step);
+  U('d_read', '     1\t// fetch with retries\n     2\tasync function getJson(url) {', { type: 'text', file: { filePath: process.cwd() + '/src/net/fetch.js', content: '...', numLines: 42, startLine: 1, totalLines: 42 } });
+  A([{ type: 'tool_use', id: 'd_edit', name: 'Edit', input: { file_path: process.cwd() + '/src/net/fetch.js', old_string: '    await sleep(100);', new_string: '    await sleep(100 * 2 ** attempt);' } }]);
+  await wait(step);
+  U('d_edit', 'The file src/net/fetch.js has been updated.', { filePath: process.cwd() + '/src/net/fetch.js', oldString: '    await sleep(100);', newString: '    await sleep(100 * 2 ** attempt);', originalFile: null, userModified: false, replaceAll: false,
+    structuredPatch: [{ oldStart: 17, oldLines: 5, newStart: 17, newLines: 5, lines: ['  for (let attempt = 0; attempt < 3; attempt++) {', '    try { return await get(url); } catch (e) { last = e; }', '-    await sleep(100);', '+    await sleep(100 * 2 ** attempt);', '  }'] }] });
+  A([{ type: 'tool_use', id: 'd_lint', name: 'Bash', input: { command: 'npx eslint src/net', description: 'Lint the net folder' } }]);
+  await wait(step);
+  U('d_lint', 'Error: eslint config not found in src/net', { stdout: '', stderr: 'Error: eslint config not found in src/net', interrupted: false }, true);
+  A([{ type: 'tool_use', id: 'd_test', name: 'Bash', input: { command: 'npm test -- net', description: 'Run the net tests' } }]);
+  await wait(step);
+  const log = ['> shop@1.0.0 test', '> node --test test/net', '', '✔ getJson returns parsed body (4ms)', '✔ getJson retries 3 times (310ms)', '✔ backoff doubles each attempt (705ms)', '✔ gives up after the last attempt (702ms)', 'ℹ tests 4', 'ℹ pass 4', 'ℹ fail 0'].join('\n');
+  U('d_test', log, { stdout: log, stderr: '', interrupted: false });
+  A([{ type: 'tool_use', id: 'd_todo2', name: 'TodoWrite', input: { todos: todos(['completed', 'completed']) } }]);
+  U('d_todo2', 'Todos have been modified successfully.', { oldTodos: todos(['in_progress', 'pending']), newTodos: todos(['completed', 'completed']) });
+  await wait(step);
+  const text = '## Fixed the flaky retry\n\nThe loop slept a **fixed** 100ms, so all 3 attempts ran inside ~300ms. It now backs off with `100 * 2 ** attempt`:\n\n```js\nfor (let attempt = 0; attempt < 3; attempt++) {\n  try { return await get(url); } catch (e) { last = e; }\n  await sleep(100 * 2 ** attempt);\n}\n```\n\n| attempt | wait |\n| --- | --- |\n| 1 | 100ms |\n| 2 | 200ms |\n| 3 | 400ms |\n\n- Tests: 4 passed\n- Lint: *skipped*, the eslint config is missing\n\nSee [Node test runner](https://nodejs.org/api/test.html) for the flags I used.';
+  A([{ type: 'text', text }]);
+  out({ type: 'result', subtype: 'success', is_error: false, result: text, session_id: sid, duration_ms: 48210, num_turns: 7, total_cost_usd: 0.0832 });
+}
+
 // The older foreground shape: 4 Task calls with typed subagents, overlapping file reads, different durations, one failure.
 async function codeReview() {
   const tasks = [
@@ -133,6 +167,7 @@ async function plan() {
   if (/code-review/i.test(prompt) && /foreground/i.test(prompt)) { await codeReview(); return; }
   if (/code-review/i.test(prompt)) { await codeReviewBg(); return; }
   if (/parallel|team/i.test(prompt)) { await team(); return; }
+  if (/retry/i.test(prompt)) { await chatDemo(); return; }
   await wait(600);
   out({ type: 'assistant', session_id: sid, message: { role: 'assistant', content: [{ type: 'text', text: 'Let me check.' }, { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls -la' } }] } });
   await wait(1200);

@@ -46,6 +46,10 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   }
   assert(log.some((m) => m.type === 'msg' && m.msg.role === 'tool' && /^Read: src\/index.js/.test(m.msg.text)), 'cursor tool_call -> "Read: src/index.js"');
   assert(log.some((m) => m.type === 'msg' && m.msg.role === 'tool' && /^Shell: npm test/.test(m.msg.text)), 'cursor tool_call -> "Shell: npm test"');
+  {
+    const rm = log.find((m) => m.type === 'msg' && m.msg.role === 'tool' && m.msg.tool === 'Read' && m.id === ids.Cur.id);
+    assert(rm && rm.msg.tid === 'c1' && rm.msg.input.file_path === 'src/index.js' && log.some((p) => p.type === 'msg_patch' && p.mid === rm.msg.mid && p.patch.status === 'ok'), 'cursor tool_call carries call id + path, completed -> ok patch');
+  }
   assert(log.filter((m) => m.type === 'msg' && m.msg.role === 'assistant' && /fake cursor-agent/.test(m.msg.text)).length >= 1 || log.some((m) => m.type === 'msg_update' && /fake cursor-agent/.test(m.text)), 'cursor reply received');
 
   // resume continuity
@@ -58,6 +62,26 @@ const waitFor = async (fn, ms = 15000) => { const t = Date.now(); while (Date.no
   ws.send(JSON.stringify({ type: 'send', id: ids.Moc.id, text: 'mock hi' }));
   await waitFor(() => log.some((m) => m.type === 'agent' && m.agent.id === ids.Cla.id && m.agent.state === 'error'), 20000);
   assert(true, 'claude error -> error state');
+
+  // chat payloads: tool inputs, results, diffs, todos, thinking and run meta reach the client
+  const cm0 = log.length;
+  ws.send(JSON.stringify({ type: 'send', id: ids.Cla.id, text: 'fix the flaky retry' }));
+  await waitFor(() => log.slice(cm0).some((m) => m.type === 'agent' && m.agent.id === ids.Cla.id && m.agent.state === 'done'), 20000);
+  {
+    const L = log.slice(cm0), msgs = L.filter((m) => m.type === 'msg' && m.id === ids.Cla.id).map((m) => m.msg);
+    for (const p of L) if (p.type === 'msg_patch') { const m = msgs.find((x) => x.mid === p.mid); if (m) Object.assign(m, p.patch); }
+    const tool = (name) => msgs.filter((x) => x.role === 'tool' && x.tool === name);
+    const [ed] = tool('Edit'), [rd] = tool('Read'), [td] = tool('TodoWrite'), bs = tool('Bash');
+    assert(ed && ed.tid === 'd_edit' && /src\/net\/fetch\.js$/.test(ed.input.file_path) && ed.input.old_string === '    await sleep(100);' && ed.input.new_string.includes('2 ** attempt'), 'Edit tool msg carries id, file_path, old/new strings');
+    assert(ed && ed.status === 'ok' && ed.meta && ed.meta.patch[0].oldStart === 17 && ed.meta.patch[0].lines.some((l) => l.startsWith('+')), 'Edit result patches in structuredPatch with line numbers');
+    assert(rd && rd.status === 'ok' && rd.meta.numLines === 42, 'Read result carries numLines (42)');
+    assert(td && td.input.todos.length === 3 && td.input.todos[1].status === 'in_progress', 'TodoWrite carries the todo list with statuses');
+    assert(bs[0].status === 'error' && /eslint config not found/.test(bs[0].out) && bs[1].status === 'ok' && bs[1].out.split('\n').length === 10 && bs[1].input.command === 'npm test -- net', 'Bash: failed run is error with its stderr, passing run carries all 10 output lines');
+    assert(msgs.some((x) => x.role === 'thinking' && /backoff/.test(x.text)), 'thinking block becomes a thinking msg');
+    const meta = msgs.find((x) => x.role === 'meta');
+    assert(meta && meta.meta.turns === 7 && meta.meta.costUsd === 0.0832 && meta.text === 'Done in 48.2s · 7 turns · $0.0832', 'result cost/duration/turns -> meta line: ' + (meta && meta.text));
+    assert(msgs.filter((x) => x.role === 'tool').every((x) => x.status === 'ok' || x.status === 'error'), 'every tool msg got a result patch');
+  }
   await waitFor(() => log.some((m) => m.type === 'agent' && m.agent.id === ids.Moc.id && m.agent.state === 'done'), 20000);
   assert(true, 'mock agent works alongside');
   ws.send(JSON.stringify({ type: 'send', id: ids.Cur.id, text: 'please fail' }));

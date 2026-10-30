@@ -104,12 +104,29 @@ const FAKE = makeFakeClaudeDir();   // sessions browser shot: sample sessions on
     // 18) a Claude agent (fake CLI) running /code-review with 4 BACKGROUND agents: 4 helpers working while the lead waits for them
     await page.evaluate(() => window.harness.select(null));
     await idle();
+    await sendTo('Grace', 'Fix the flaky retry in the fetch helper and run the tests.');
+    await waitState('Grace', 'done', 20000); await sleep(300);
     await sendTo('Grace', '/code-review');
     await page.waitForFunction(() => { const H = window.harness, g = [...H.agents.values()].find((a) => a.name === 'Grace');
       return /waiting for 4 background/.test(g.toolSummary || '') && [...H.agents.values()].filter((a) => { const h = H.help(a.id); return h && h.phase === 'work' && h.seated; }).length >= 4; }, null, { timeout: 30000 });
     await sleep(600);
     await shot('18-claude-background-code-review-4-helpers-hd.png');
     await waitState('Grace', 'done', 40000);
+
+    // 19/20) the chat panel in Claude Code style (fake CLI data): prompt, thinking, todos, tool calls + results, Edit diff,
+    // then the markdown answer with a code block and table, the cost line and the background agent group
+    await page.evaluate((i) => window.harness.select(i), await id('Grace'));
+    await sleep(400);
+    const chatClip = () => page.evaluate(() => { const r = document.getElementById('chat').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
+    const scrollTo = (sel, re) => page.evaluate(([sel, re]) => {
+      const t = document.getElementById('transcript'), e = [...t.querySelectorAll(sel)].find((x) => new RegExp(re).test(x.textContent));
+      const th = t.querySelector('details.msg.thinking'); if (th) th.open = true;
+      t.scrollTop += e.getBoundingClientRect().top - t.getBoundingClientRect().top - 6;
+    }, [sel, re]);
+    await scrollTo('.msg.user', 'flaky retry'); await sleep(200);
+    await page.screenshot({ path: path.join(OUT, '19-chat-claude-style-tools-diff-todos-hd.png'), clip: await chatClip() }); console.log('saved 19-chat-claude-style-tools-diff-todos-hd.png');
+    await scrollTo('.msg.assistant', 'Fixed the flaky retry'); await sleep(200);
+    await page.screenshot({ path: path.join(OUT, '20-chat-claude-style-markdown-background-agents-hd.png'), clip: await chatClip() }); console.log('saved 20-chat-claude-style-markdown-background-agents-hd.png');
 
     // 9-12) manager desk + round table overview, monitors facing the people (close-up), plan mode gathering, plan ready + summary bubble
     await page.evaluate(() => window.harness.select(null));

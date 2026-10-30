@@ -225,6 +225,20 @@ Cursor agents cycle `default → plan → ask → default`, mapped to the print-
 ![Permission mode line: accept edits, then plan](screenshots/hd/15-permission-mode-line-hd.png)
 ![Cursor mode line: default, plan, ask](screenshots/hd/17-cursor-mode-line-hd.png)
 
+### Chat panel (Claude Code style)
+
+The transcript reads like the Claude Code terminal in the office palette: `> prompt` on a band, `●` + markdown for replies
+(headings, bold/italic, inline code, fenced code with a language label, lists, links, tables), `● Read(src/app.js)` tool lines
+with a dim `⎿ Read 120 lines` result (long output folds to `… +N lines`, click or Enter to expand), +/- diffs for Edit/Write with
+file line numbers when Claude sends a `structuredPatch`, a checklist for TodoWrite, `● Agent(label)` helpers grouped on one rail with
+the colleague who took the job (and a `background` tag), a collapsed `✻ Thinking…` block, a `Done in 48.2s · 7 turns · $0.0832`
+line and a `✻ Pondering… (12s · esc to interrupt)` status line above the input (Esc in the message box stops the run).
+Markdown is parsed by `public/js/chatfmt.js` (no dependencies) and only ever written with `textContent`; links must be absolute http(s).
+Cursor agents get the same tool lines and output (no diffs or todos: its stream doesn't carry them); mock agents send fake tool data.
+
+![Chat panel: tool calls, Edit diff, todos](screenshots/hd/19-chat-claude-style-tools-diff-todos-hd.png)
+![Chat panel: markdown answer and background agents](screenshots/hd/20-chat-claude-style-markdown-background-agents-hd.png)
+
 ### Using it
 
 | Action | How |
@@ -339,10 +353,12 @@ lib/adapters/cursor.js    Cursor CLI agent adapter (stream-json)
 lib/claude-sessions.js    read-only Claude Code session reader
 lib/cursor-sessions.js    read-only Cursor CLI chat reader (meta.json + transcript JSONL)
 lib/adapters/mock.js      simulated agent
+lib/tool-data.js          the capped tool input/result fields the chat draws (paths, commands, old/new strings, todos, patches)
 lib/adapters/index.js     adapter registry, per-type availability, default type
 public/index.html, style.css
 public/js/office-iso.js   isometric renderer (default): projection, furniture, 4-facing characters, depth sort, hit test, pathfinding
 public/js/office-flat.js  the original top-down renderer (`?view=flat`); also supplies shared bubble/icon helpers
+public/js/chatfmt.js      chat formatting: markdown parser, diffs, tool/todo/helper lines (also loaded by scripts/test-chat.js)
 public/js/app.js          WebSocket client, chat panel, wandering logic, plan-mode gathering (`updateMeeting`)
 scripts/screenshots.js    Playwright demo: hires, chats, screenshots → screenshots/ (screenshots-hd.js: 3840×2160; team-shots.js: shared /code-review beats, plan-shots.js: manager desk / round table beats)
 scripts/fake-claude.js    fake `claude` binary for adapter testing
@@ -353,7 +369,7 @@ scripts/test-adapters.js  end-to-end test of all agent types + type persistence 
 ```
 
 WebSocket protocol — client→server: `hire {name,cwd,agentType}`, `fire {id}`, `send {id,text}`, `interrupt {id}`, `relay {from,to,text}`, `promote {id}`, `permission {id,mode}`, `resume {sessionId,source:'claude'|'cursor'}`; `hire` also takes `permissionMode` and `slot`;
-server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `subagent`, `team`, `relay`, `error`.
+server→client: `snapshot`, `agent` (state/tool updates), `removed`, `msg`, `msg_update` (streamed text), `msg_patch` (tool result/status), `subagent`, `team`, `relay`, `error`.
 
 ## Regenerate screenshots
 
@@ -374,6 +390,6 @@ scale (×7 at DPR 2), so nothing is resampled; the script asserts this before ca
 
 * Max 7 agents (6 desks + the manager desk); fixed office layout; the isometric camera is fixed (no rotation/zoom); bubbles of different agents can overlap.
 * Claude and Cursor modes are untested with the real CLIs; plan-mode detection (`permissionMode: plan` in init, `ExitPlanMode` tool use) is only exercised through `scripts/fake-claude.js`, Cursor flags are from `agent --help` but not run logged in; no tool-permission prompts in headless mode; one process per message.
-* No auth; no markdown rendering in chat; long transcripts are capped at 300 messages per agent.
+* No auth; long transcripts are capped at 300 messages per agent.
 * Next: `/clear`/new-session button, per-agent model & permission settings,
   markdown/diff rendering, sound, day/night cycle.

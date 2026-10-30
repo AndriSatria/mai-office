@@ -40,8 +40,9 @@
           <summary>👥 Team activity <span id="teamCount" class="dim"></span></summary>
           <div id="teamLog"></div>
         </details>
-        <div id="transcript"></div>
+        <div id="transcript" aria-label="Conversation"></div>
         <form id="composer">
+          <div id="statusLine" class="statusLine" hidden><span class="sl-glyph" aria-hidden="true">✻</span> <span class="sl-word" aria-hidden="true"></span> <span class="sl-meta" aria-hidden="true"></span><span class="sr-only" role="status"></span></div>
           <div id="slashPop" role="listbox" aria-label="Slash commands" hidden></div>
           <textarea id="input" rows="2" placeholder="Type a message… (Enter to send, Shift+Enter for newline)" aria-autocomplete="list" aria-controls="slashPop" aria-expanded="false"></textarea>
           <button type="button" id="modeLine" class="modeLine" title="Permission mode for this agent's next run. Shift+Tab in the message box also cycles it."></button>
@@ -89,6 +90,7 @@
 
   <script src="js/office-flat.js"></script>
   <script src="js/office-iso.js"></script>
+  <script src="js/chatfmt.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

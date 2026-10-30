@@ -119,6 +119,13 @@
         if (m.id === selectedId) renderTeam();
         break;
       }
+      case 'msg_patch': {
+        const a = agents.get(m.id); if (!a) break;
+        const msg = a.transcript.find((x) => x.mid === m.mid); if (!msg) break;
+        Object.assign(msg, m.patch);
+        if (m.id === selectedId) updateMsgEl(msg);
+        break;
+      }
       case 'sub_update': {
         const a = agents.get(m.id); if (!a) break;
         const msg = a.transcript.find((x) => x.mid === m.mid); if (!msg) break;
@@ -166,6 +173,7 @@
     if (a.helping) { st.textContent = 'helping ' + a.helping.parentName + ' · ' + a.helping.role; st.className = 'pill helping'; }
     else { st.textContent = a.state === 'working' && a.tool ? 'working · ' + a.tool : a.state; st.className = 'pill ' + a.state; }
     $('stopBtn').hidden = !(a.state === 'thinking' || a.state === 'working');
+    tickStatus();
     $('queueInfo').textContent = a.queued ? `${a.queued} message(s) queued${a.helping ? ` until the helper job ends` : ''}` : (a.helping ? `helping ${a.helping.parentName}: new messages wait` : a.hasSession ? 'session active' : '');
     $('teamBtn').hidden = a.type !== 'mock';
     $('mainBadge').hidden = !a.main; $('mainBtn').hidden = !!a.main;
@@ -181,34 +189,19 @@
     }
   }
 
+  const fmtOpts = () => { const a = agents.get(selectedId); return { cwd: a ? a.cwd : '' }; };
   function appendMsg(m, noScroll) {
     const near = tr.scrollHeight - tr.scrollTop - tr.clientHeight < 60;
-    let el;
-    if (m.role === 'sub') { el = document.createElement('details'); el.className = 'msg sub'; el.innerHTML = '<summary></summary><div class="subLog"></div><div class="subRes"></div>'; fillSub(el, m); }
-    else {
-      el = document.createElement('div');
-      el.className = 'msg ' + m.role + (m.streaming ? ' streaming' : '');
-      el.textContent = m.role === 'tool' ? '▸ ' + m.text : m.text;
-    }
+    const el = ChatFmt.renderMsg(document, m, fmtOpts());
     tr.appendChild(el); msgEls.set(m.mid, el);
     if (!noScroll && near) tr.scrollTop = tr.scrollHeight;
   }
-  const SUB_STATUS = { running: 'started', finished: 'finished', failed: 'failed', lost: 'interrupted' };
-  /** collapsed system line "↳ helper 'explore repo' started / finished", expandable to its activity log */
-  function fillSub(el, m) {
-    const sb = m.sub || { label: '?', status: 'running', log: [] };
-    el.className = 'msg sub ' + sb.status;
-    el.querySelector('summary').textContent = `↳ helper '${sb.label}' ${SUB_STATUS[sb.status] || sb.status}` + (sb.role ? ` · ${sb.role}` : sb.kind ? ` · ${sb.kind}` : '') + (sb.helper ? ` · ${sb.helper}` : '') + (sb.log.length ? ` · ${sb.log.length} step${sb.log.length > 1 ? 's' : ''}` : '');
-    const log = el.querySelector('.subLog'); log.textContent = '';
-    for (const l of sb.log) { const d = document.createElement('div'); d.textContent = '▸ ' + l.tool + (l.summary ? ' ' + l.summary : ''); log.appendChild(d); }
-    if (!sb.log.length) { const d = document.createElement('div'); d.textContent = 'no activity reported'; log.appendChild(d); }
-    el.querySelector('.subRes').textContent = sb.result ? '→ ' + sb.result : '';
-  }
   function updateMsgEl(m) {
     const el = msgEls.get(m.mid); if (!el) return;
-    if (m.role === 'sub') { fillSub(el, m); return; }
     const near = tr.scrollHeight - tr.scrollTop - tr.clientHeight < 60;
-    el.textContent = m.text;
+    ChatFmt.renderMsg(document, m, fmtOpts(), el);
+    if (near) tr.scrollTop = tr.scrollHeight;
+    if (m.role !== 'assistant') return;
     const a = agents.get(selectedId);
     // streaming flag is cleared by the server once the block completes; approximate here
     el.classList.toggle('streaming', a && (a.state === 'working' || a.state === 'thinking') && m === a.transcript[a.transcript.length - 1]);
@@ -299,10 +292,33 @@
     }
     if (slash.open && slash.items.length && (e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.isComposing) { e.preventDefault(); pickSlash(slash.idx); return; }
     if (slash.open && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSlash(); return; }
+    if (e.key === 'Escape' && isRunning(agents.get(selectedId))) { e.preventDefault(); send({ type: 'interrupt', id: selectedId }); return; }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); }
   });
   $('mainBtn').addEventListener('click', () => { const a = agents.get(selectedId); if (a && !a.main) send({ type: 'promote', id: a.id }); });
   $('stopBtn').addEventListener('click', () => selectedId && send({ type: 'interrupt', id: selectedId }));
+
+  // ---------- status line above the input ("✻ Pondering… (12s · esc to interrupt)") ----------
+  const SPIN = ['·', '✢', '✳', '✶', '✻', '✽'], WORDS = ['Pondering', 'Brewing', 'Tinkering', 'Mulling', 'Crafting', 'Noodling', 'Percolating', 'Puzzling'];
+  const calm = matchMedia('(prefers-reduced-motion: reduce)');
+  const isRunning = (a) => !!a && !a.helping && (a.state === 'thinking' || a.state === 'working');
+  let spinI = 0, slFor = '';
+  function tickStatus() {
+    const a = agents.get(selectedId), sl = $('statusLine'), on = isRunning(a);
+    sl.hidden = !on;
+    if (!on) { slFor = ''; sl.querySelector('.sr-only').textContent = ''; return; }
+    const key = a.id + ':' + (a.runAt || 0);
+    if (slFor !== key) {   // one word per run, announced once (the ticking timer stays out of the live region)
+      slFor = key;
+      sl.querySelector('.sl-word').textContent = WORDS[Math.abs((a.runAt || 0) / 1000 | 0) % WORDS.length] + '…';
+      sl.querySelector('.sr-only').textContent = `${a.name} is working. Press Escape in the message box to interrupt.`;
+    }
+    const secs = a.runAt ? Math.max(0, Math.round((Date.now() - a.runAt) / 1000)) : 0;
+    const what = a.state === 'working' && a.tool ? ` · ${a.tool}` : '';
+    sl.querySelector('.sl-meta').textContent = `(${secs}s${what} · esc to interrupt)`;
+    sl.querySelector('.sl-glyph').textContent = calm.matches ? '✻' : SPIN[spinI++ % SPIN.length];
+  }
+  setInterval(tickStatus, 250);
 
   // ---------- team activity feed (per lead) ----------
   const TEAM_ICON = { plan: '📋', assign: '➜', note: '…', peer: '💬', handoff: '📨', mention: '✉', huddle: '👥' };

@@ -8,12 +8,13 @@
     "start:mock": "HARNESS_MODE=mock node server.js",
     "start:claude": "HARNESS_MODE=claude node server.js",
     "screenshots": "node scripts/screenshots.js",
-    "test:adapters": "node scripts/test-adapters.js",
+    "test:adapters": "node scripts/test-chat.js && node scripts/test-adapters.js",
     "test:iso": "node scripts/test-iso.js",
     "screenshots:hd": "node scripts/screenshots-hd.js",
     "demo:video": "node scripts/demo-video.js",
     "demo:video:codereview": "node scripts/demo-video.js codereview",
-    "demo:videos": "node scripts/demo-video.js && node scripts/demo-video.js codereview"
+    "demo:videos": "node scripts/demo-video.js && node scripts/demo-video.js codereview",
+    "test:chat": "node scripts/test-chat.js"
   },
   "engines": {
     "node": ">=18"

@@ -204,7 +204,8 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     assert(await page.evaluate((id) => window.harness.agents.get(id).queued >= 1, hid[0]), 'a message to a helping person is queued, not run');
     await page.click('#transcript details.msg.sub summary'); await sleep(200);
     assert(await page.evaluate(() => document.querySelectorAll('#transcript details.msg.sub[open]').length === 1), 'expanding a helper line shows its activity log');
-    assert(/helper '[^']+' (started|finished)/.test(await page.evaluate(() => document.querySelector('#transcript details.msg.sub summary').textContent)), 'sub line reads "↳ helper \'label\' started/finished"');
+    const subTxt = await page.evaluate(() => document.querySelector('#transcript details.msg.sub summary').textContent);
+    assert(/^●Agent\([^)]+\)⎿\w+ · \w+ · (running|done)/.test(subTxt), 'helper reads "● Agent(label)" then "⎿ colleague · role · status": ' + subTxt);
     // flights + inferred interactions during the run
     let kinds = new Set(), sawPeerTalk = false, sawHuddle = false, standing = 0;
     for (let i = 0; i < 700 && !(sawHuddle && kinds.has('back') && kinds.has('out') && sawPeerTalk); i++) {
@@ -282,6 +283,33 @@ const assert = (c, m) => { if (!c) { console.error('FAIL:', m); process.exitCode
     const sw = await page.evaluate((ids) => ({ g: window.harness.states().find((a) => a.id === ids.Grace), a: window.harness.states().find((a) => a.id === ids.Ada) }), ids0);
     assert(sw.g.main && sw.g.slot === MGR && !sw.a.main && sw.a.slot === gs && sw.g.home && sw.a.home, `Make main: Grace -> manager desk, Ada -> desk ${gs}`);
     assert(await page.evaluate(() => document.getElementById('mainBtn').hidden && !document.getElementById('mainBadge').hidden), 'the main agent shows the ★ main badge instead of the button');
+
+    // ---- chat panel: Claude Code style formatting stays safe (model text is never parsed as HTML) ----
+    await page.evaluate((id) => window.harness.select(id), ids0.Grace);
+    await page.waitForFunction(() => !document.getElementById('stopBtn').offsetParent, null, { timeout: 30000 }).catch(() => {});
+    await page.fill('#input', '<img src=x onerror=window.__xss=1>'); await page.press('#input', 'Enter');
+    await page.waitForFunction(() => [...document.querySelectorAll('#transcript .msg.assistant')].some((e) => e.textContent.includes('<img src=x')), null, { timeout: 30000 });
+    const xs = await page.evaluate(() => {
+      const t = document.getElementById('transcript'), box = document.createElement('div');
+      const md = '# T\n<script>window.__xss=2</script>\n[click](javascript:window.__xss=3) [ok](https://example.com)\n\n```html\n<b onclick="x()">bold</b>\n```\n\n| a | b |\n|---|---|\n| ' + 'wide '.repeat(40) + ' | 2 |';
+      box.appendChild(ChatFmt.renderMsg(document, { role: 'assistant', text: md }, {}));
+      box.appendChild(ChatFmt.renderMsg(document, { role: 'tool', tool: 'Bash', input: { command: 'npm test' }, status: 'ok', out: 'l1\nl2\nl3\nl4\nl5\nl6' }, {}));
+      box.id = 'xssBox'; t.appendChild(box);
+      const links = [...box.querySelectorAll('a')];
+      const r = { img: t.querySelectorAll('img').length, script: t.querySelectorAll('script').length, xss: window.__xss, hrefs: links.map((a) => a.getAttribute('href')), rel: links.every((a) => /noopener/.test(a.rel)),
+        code: box.querySelector('.md-code code').textContent, bold: box.querySelectorAll('.md-code b').length, lang: box.querySelector('.md-lang').textContent, overflow: t.scrollWidth - t.clientWidth,
+        user: [...t.querySelectorAll('.msg.user')].pop().textContent };
+      window.__box = box;
+      return r;
+    });
+    assert(xs.img === 0 && xs.script === 0 && xs.xss === undefined, 'HTML in prompts, replies and markdown renders as text: no <img>/<script> elements, nothing ran');
+    assert(JSON.stringify(xs.hrefs) === '["https://example.com/"]' && xs.rel, 'javascript: link dropped, the https link kept with rel=noopener: ' + JSON.stringify(xs.hrefs));
+    assert(xs.code === '<b onclick="x()">bold</b>' && xs.bold === 0 && xs.lang === 'html', 'HTML inside a fenced code block is shown as text under its language label');
+    assert(xs.overflow <= 0, `a wide table scrolls inside its own box, the 380px chat panel has no horizontal overflow (${xs.overflow}px)`);
+    assert(xs.user.startsWith('> ') && xs.user.includes('<img'), 'user prompt renders as "> message"');
+    await page.focus('#xssBox .cc-more'); await page.keyboard.press('Enter');
+    const exp = await page.evaluate(() => { const b = window.__box; const r = { lines: b.querySelectorAll('.cc-ol').length, more: b.querySelectorAll('.cc-more').length }; b.remove(); return r; });
+    assert(exp.lines === 5 && exp.more === 0, `"… +N lines" expands from the keyboard (${exp.lines} output lines)`);
 
     // integer pixel scale
     const sc = await page.evaluate(() => { const c = document.getElementById('office'); return [c.width / window.Office.W, c.height / window.Office.H]; });
